@@ -28,6 +28,24 @@
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
+      <PreActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Run Script"
+               scriptText = "export RP_LAUNCH_UUID=$(uuidgen)&#10;echo &quot;&#x1f680; ReportPortal Launch UUID: $RP_LAUNCH_UUID&quot;&#10;&#10;# Enable detailed logging&#10;export RP_LOG_ENABLED=true&#10;export RP_LOG_LEVEL=INFO&#10;echo &quot;&#x1f4cb; Logging enabled: INFO level&quot;&#10;">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "9203A3A92135C20E00BFAF82"
+                     BuildableName = "ExampleUITests.xctest"
+                     BlueprintName = "ExampleUITests"
+                     ReferencedContainer = "container:ReportPortalAgent.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PreActions>
       <TestPlans>
          <TestPlanReference
             reference = "container:Example/Example.xctestplan"

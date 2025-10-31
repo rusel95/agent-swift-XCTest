@@ -95,33 +95,45 @@ public final class ReportingService: Sendable {
 
         do {
             let result: LaunchV2Response = try await httpClientV2.callEndPoint(endPoint)
-            Logger.shared.info("Launch created (v2): \(result.id)")
+            print("✅ [ReportPortal] Launch created successfully - ID: \(result.id)")
+            Logger.shared.info("✅ Launch created successfully (v2) - Launch ID: \(result.id), UUID: \(uuid ?? "server-generated")")
             return result.id
         } catch let error as HTTPClientError {
             // Handle 409 Conflict - launch already exists (expected in parallel mode)
             if case .httpError(let statusCode, let body) = error, statusCode == 409 {
-                Logger.shared.info("Launch already created by another worker (409 Conflict) - joining existing launch")
+                print("⚡️ [ReportPortal] 409 Conflict - Worker joining existing launch")
+                Logger.shared.info("⚡️ 409 Conflict - Launch already exists (UUID: \(uuid ?? "none")). Worker joining existing launch...")
 
                 // Try to extract launch ID from error response
                 if let body = body, let data = body.data(using: .utf8) {
+                    Logger.shared.debug("409 Response body: \(body)")
                     if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let launchID = json["id"] as? String {
-                        Logger.shared.info("Extracted launch ID from 409 response: \(launchID)")
+                        print("✅ [ReportPortal] Extracted launch ID from 409 response: \(launchID)")
+                        Logger.shared.info("✅ Extracted launch ID from 409 response: \(launchID)")
                         return launchID
                     }
                 }
 
                 // Fallback: use the provided UUID
                 if let uuid = uuid {
-                    Logger.shared.info("Using provided UUID as launch ID: \(uuid)")
+                    print("⚠️ [ReportPortal] Using UUID as launch ID: \(uuid)")
+                    Logger.shared.info("⚠️ Could not extract ID from 409 response, using provided UUID as launch ID: \(uuid)")
                     return uuid
                 }
 
                 // Last resort: throw the original error if we can't determine the launch ID
+                print("❌ [ReportPortal] 409 Conflict but cannot determine launch ID")
+                Logger.shared.error("❌ 409 Conflict but cannot determine launch ID (no ID in response, no UUID provided)")
                 throw error
             }
 
             // Re-throw other HTTP errors
+            if case .httpError(let statusCode, _) = error {
+                Logger.shared.error("❌ HTTP error \(statusCode) during launch creation")
+            } else {
+                Logger.shared.error("❌ Network error during launch creation: \(error)")
+            }
             throw error
         }
     }
@@ -147,6 +159,8 @@ public final class ReportingService: Sendable {
     ///   - launchID: Launch ID from LaunchManager
     ///   - status: Aggregated status from LaunchManager
     func finalizeLaunchV2(launchID: String, status: TestStatus) async throws {
+        Logger.shared.info("Attempting to finalize launch: \(launchID) with status: \(status.rawValue)")
+
         let endPoint = FinishLaunchV2EndPoint(
             launchID: launchID,
             status: status
@@ -158,11 +172,11 @@ public final class ReportingService: Sendable {
             // Mark as finalized in LaunchManager
             await launchManager.markFinalized()
 
-            Logger.shared.info("Launch finalized (v2): \(launchID) with status: \(status.rawValue)")
+            Logger.shared.info("✅ Launch finalized successfully (v2): \(launchID) with status: \(status.rawValue)")
         } catch let error as HTTPClientError {
             // Handle 404/409 - launch already finished by another worker (expected in parallel mode)
             if case .httpError(let statusCode, _) = error, statusCode == 404 || statusCode == 409 {
-                Logger.shared.info("Launch already finished by another worker (HTTP \(statusCode)) - no action needed")
+                Logger.shared.info("⚡️ HTTP \(statusCode) - Launch already finished by another worker. This is expected in parallel mode.")
 
                 // Mark as finalized in LaunchManager even though we didn't do the finish
                 await launchManager.markFinalized()

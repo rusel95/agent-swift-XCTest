@@ -11,8 +11,6 @@
 		850CF3682EB504F700BFF502 /* FinishLaunchV2EndPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF3672EB504F700BFF502 /* FinishLaunchV2EndPoint.swift */; };
 		850CF36A2EB5050600BFF502 /* PostLogEndPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF3692EB5050600BFF502 /* PostLogEndPoint.swift */; };
 		850CF36C2EB5051C00BFF502 /* StartLaunchV2EndPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF36B2EB5051C00BFF502 /* StartLaunchV2EndPoint.swift */; };
-		850CF36E2EB5052C00BFF502 /* LaunchIdLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF36D2EB5052C00BFF502 /* LaunchIdLock.swift */; };
-		850CF3702EB5054700BFF502 /* CoordinationPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF36F2EB5054700BFF502 /* CoordinationPaths.swift */; };
 		850CF3722EB5055D00BFF502 /* SessionHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF3712EB5055D00BFF502 /* SessionHelper.swift */; };
 		850CF3742EB5057300BFF502 /* ReportingServiceError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF3732EB5057300BFF502 /* ReportingServiceError.swift */; };
 		851D90F92EB14A3B0026437F /* LaunchManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 851D90F72EB14A3B0026437F /* LaunchManagerTests.swift */; };
@@ -29,7 +27,6 @@
 		85529CEA2EA90BD20080536D /* TestOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CD52EA909650080536D /* TestOperation.swift */; };
 		85529CEB2EA90BD20080536D /* FinishLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CDB2EA909990080536D /* FinishLaunch.swift */; };
 		85529CEC2EA90BD20080536D /* NameRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CDF2EA909DA0080536D /* NameRules.swift */; };
-		85544E442EB25F0100B16B50 /* LaunchCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85544E432EB25F0100B16B50 /* LaunchCoordinator.swift */; };
 		85544E462EB26A4200B16B50 /* FileLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85544E452EB26A4200B16B50 /* FileLogger.swift */; };
 		85B50B652EB1FF54003A22C5 /* XCTestCase+Expectations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85B50B642EB1FF54003A22C5 /* XCTestCase+Expectations.swift */; };
 		85DBACE52E44D5DA00297994 /* DeviceHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85DBACE42E44D5DA00297994 /* DeviceHelper.swift */; };
@@ -109,8 +106,6 @@
 		850CF3672EB504F700BFF502 /* FinishLaunchV2EndPoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinishLaunchV2EndPoint.swift; sourceTree = "<group>"; };
 		850CF3692EB5050600BFF502 /* PostLogEndPoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostLogEndPoint.swift; sourceTree = "<group>"; };
 		850CF36B2EB5051C00BFF502 /* StartLaunchV2EndPoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartLaunchV2EndPoint.swift; sourceTree = "<group>"; };
-		850CF36D2EB5052C00BFF502 /* LaunchIdLock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchIdLock.swift; sourceTree = "<group>"; };
-		850CF36F2EB5054700BFF502 /* CoordinationPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinationPaths.swift; sourceTree = "<group>"; };
 		850CF3712EB5055D00BFF502 /* SessionHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionHelper.swift; sourceTree = "<group>"; };
 		850CF3732EB5057300BFF502 /* ReportingServiceError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportingServiceError.swift; sourceTree = "<group>"; };
 		851D90F72EB14A3B0026437F /* LaunchManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchManagerTests.swift; sourceTree = "<group>"; };
@@ -124,7 +119,6 @@
 		85529CDB2EA909990080536D /* FinishLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinishLaunch.swift; sourceTree = "<group>"; };
 		85529CDF2EA909DA0080536D /* NameRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NameRules.swift; sourceTree = "<group>"; };
 		85529CE12EA90A060080536D /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
-		85544E432EB25F0100B16B50 /* LaunchCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchCoordinator.swift; sourceTree = "<group>"; };
 		85544E452EB26A4200B16B50 /* FileLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileLogger.swift; sourceTree = "<group>"; };
 		85B50B642EB1FF54003A22C5 /* XCTestCase+Expectations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "XCTestCase+Expectations.swift"; sourceTree = "<group>"; };
 		85DBACE42E44D5DA00297994 /* DeviceHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceHelper.swift; sourceTree = "<group>"; };
@@ -305,8 +299,6 @@
 				85529CDB2EA909990080536D /* FinishLaunch.swift */,
 				92FEE06B212E925D00ADB1ED /* Item.swift */,
 				92FEE06D212E926400ADB1ED /* Launch.swift */,
-				85544E432EB25F0100B16B50 /* LaunchCoordinator.swift */,
-				850CF36D2EB5052C00BFF502 /* LaunchIdLock.swift */,
 				85529CCF2EA9092D0080536D /* LaunchManager.swift */,
 				92FEE06C1000000000000000 /* LogResponse.swift */,
 				85529CDF2EA909DA0080536D /* NameRules.swift */,
@@ -320,7 +312,6 @@
 			isa = PBXGroup;
 			children = (
 				92FEE083212ECB7900ADB1ED /* AuthorizationPlugin.swift */,
-				850CF36F2EB5054700BFF502 /* CoordinationPaths.swift */,
 				85DBACE42E44D5DA00297994 /* DeviceHelper.swift */,
 				85544E452EB26A4200B16B50 /* FileLogger.swift */,
 				92FEE07E212ECB7900ADB1ED /* HTTPClient.swift */,
@@ -536,7 +527,6 @@
 				92FEE074212EA37200ADB1ED /* TestStatus.swift in Sources */,
 				9203A3C32137264000BFAF82 /* LaunchMode.swift in Sources */,
 				85529CE22EA90A060080536D /* Logger.swift in Sources */,
-				85544E442EB25F0100B16B50 /* LaunchCoordinator.swift in Sources */,
 				850CF3682EB504F700BFF502 /* FinishLaunchV2EndPoint.swift in Sources */,
 				850CF3722EB5055D00BFF502 /* SessionHelper.swift in Sources */,
 				92FEE094212EEE2D00ADB1ED /* FinishItemEndPoint.swift in Sources */,
@@ -545,7 +535,6 @@
 				92FEE08C212ECB7900ADB1ED /* EndPoint.swift in Sources */,
 				92FEE08B212ECB7900ADB1ED /* StartLaunchEndPoint.swift in Sources */,
 				85529CE32EA90BD20080536D /* SuiteOperation.swift in Sources */,
-				850CF3702EB5054700BFF502 /* CoordinationPaths.swift in Sources */,
 				85529CE42EA90BD20080536D /* AgentConfiguration.swift in Sources */,
 				85529CE52EA90BD20080536D /* Item.swift in Sources */,
 				85529CE62EA90BD20080536D /* Launch.swift in Sources */,
@@ -559,7 +548,6 @@
 				92FEE08E212EEA0300ADB1ED /* TagHelper.swift in Sources */,
 				92FEE088212ECB7900ADB1ED /* UIDevice+ModelName.swift in Sources */,
 				850CF3742EB5057300BFF502 /* ReportingServiceError.swift in Sources */,
-				850CF36E2EB5052C00BFF502 /* LaunchIdLock.swift in Sources */,
 				850CF36A2EB5050600BFF502 /* PostLogEndPoint.swift in Sources */,
 				368751BD1F5867200021B74D /* RPListener.swift in Sources */,
 				85E0F85E2EA957F7006255D3 /* ReportingService.swift in Sources */,

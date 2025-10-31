@@ -327,4 +327,102 @@ final class LaunchManagerTests: XCTestCase {
         let isFinalized = await LaunchManager.shared.isLaunchFinalized()
         XCTAssertTrue(isFinalized)
     }
+
+    // MARK: - UUID Generation Tests (T010, T016)
+
+    func testGetOrGenerateLaunchUUID_GeneratesUUID() async {
+        // Given: No environment variable set (already cleared by setUp)
+
+        // When: Get or generate UUID
+        let uuid1 = await LaunchManager.shared.getOrGenerateLaunchUUID()
+
+        // Then: Should generate RFC 4122 UUID format (8-4-4-4-12 hex characters)
+        // Example: 550e8400-e29b-41d4-a716-446655440000
+        XCTAssertFalse(uuid1.isEmpty, "UUID should not be empty")
+        XCTAssertTrue(uuid1.contains("-"), "UUID should contain hyphens")
+
+        // Verify RFC 4122 UUID format
+        let components = uuid1.split(separator: "-")
+        XCTAssertEqual(components.count, 5, "UUID should have 5 components (8-4-4-4-12)")
+        XCTAssertEqual(components[0].count, 8, "First component should be 8 characters")
+        XCTAssertEqual(components[1].count, 4, "Second component should be 4 characters")
+        XCTAssertEqual(components[2].count, 4, "Third component should be 4 characters")
+        XCTAssertEqual(components[3].count, 4, "Fourth component should be 4 characters")
+        XCTAssertEqual(components[4].count, 12, "Fifth component should be 12 characters")
+
+        // Verify it's a valid UUID by attempting to create UUID from string
+        XCTAssertNotNil(UUID(uuidString: uuid1), "Generated string should be a valid UUID")
+    }
+
+    func testGetOrGenerateLaunchUUID_CachesUUID() async {
+        // Given: No environment variable set
+
+        // When: Get UUID twice
+        let uuid1 = await LaunchManager.shared.getOrGenerateLaunchUUID()
+        let uuid2 = await LaunchManager.shared.getOrGenerateLaunchUUID()
+
+        // Then: Should return same UUID (cached)
+        XCTAssertEqual(uuid1, uuid2, "UUID should be cached and reused")
+    }
+
+    func testGetOrGenerateLaunchUUID_ConcurrentCallsReturnSameUUID() async {
+        // Given: Multiple concurrent calls
+
+        // When: Get UUID from multiple tasks
+        async let uuid1 = LaunchManager.shared.getOrGenerateLaunchUUID()
+        async let uuid2 = LaunchManager.shared.getOrGenerateLaunchUUID()
+        async let uuid3 = LaunchManager.shared.getOrGenerateLaunchUUID()
+
+        let (id1, id2, id3) = await (uuid1, uuid2, uuid3)
+
+        // Then: All should return same UUID (cached after first generation)
+        XCTAssertEqual(id1, id2, "Concurrent calls should return same UUID due to caching")
+        XCTAssertEqual(id2, id3, "Concurrent calls should return same UUID due to caching")
+
+        // Verify it's a valid RFC 4122 UUID
+        XCTAssertNotNil(UUID(uuidString: id1), "Returned UUID should be valid RFC 4122 format")
+    }
+
+    func testAggregatedStatus_HierarchyCorrect() async {
+        // Given: Fresh LaunchManager
+
+        // Test: FAILED > STOPPED > PASSED hierarchy
+
+        // PASSED initially
+        var status = await LaunchManager.shared.getAggregatedStatus()
+        XCTAssertEqual(status, .passed, "Initial status should be passed")
+
+        // STOPPED overrides PASSED
+        await LaunchManager.shared.updateStatus(.stopped)
+        status = await LaunchManager.shared.getAggregatedStatus()
+        XCTAssertEqual(status, .stopped, "STOPPED should override PASSED")
+
+        // FAILED overrides STOPPED
+        await LaunchManager.shared.updateStatus(.failed)
+        status = await LaunchManager.shared.getAggregatedStatus()
+        XCTAssertEqual(status, .failed, "FAILED should override STOPPED")
+
+        // PASSED should not override FAILED
+        await LaunchManager.shared.updateStatus(.passed)
+        status = await LaunchManager.shared.getAggregatedStatus()
+        XCTAssertEqual(status, .failed, "PASSED should not override FAILED")
+    }
+
+    func testAggregatedStatus_CancelledTreatedAsStopped() async {
+        // Given: Fresh LaunchManager
+
+        // When: Update with cancelled
+        await LaunchManager.shared.updateStatus(.cancelled)
+
+        // Then: Should be treated with same severity as stopped
+        let status = await LaunchManager.shared.getAggregatedStatus()
+        XCTAssertEqual(status, .cancelled, "Cancelled should be preserved")
+
+        // Verify cancelled has same priority as stopped
+        await LaunchManager.shared.reset()
+        await LaunchManager.shared.updateStatus(.passed)
+        await LaunchManager.shared.updateStatus(.cancelled)
+        let finalStatus = await LaunchManager.shared.getAggregatedStatus()
+        XCTAssertEqual(finalStatus, .cancelled, "Cancelled should override passed")
+    }
 }

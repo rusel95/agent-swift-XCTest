@@ -164,6 +164,9 @@ open class RPListener: NSObject, XCTestObservation {
 
         // Log bundle start
         let bundleName = (testBundle.bundlePath as NSString).lastPathComponent
+        let pid = getpid()
+        let pgid = getpgid(pid)
+        print("🟢 [ReportPortal] Bundle started: \(bundleName) (PID: \(pid), PGID: \(pgid))")
         Logger.shared.info("Bundle started: \(bundleName)")
 
         // Increment bundle count and create launch if needed
@@ -197,10 +200,13 @@ open class RPListener: NSObject, XCTestObservation {
 
                 // UUID-based coordination: Generate or read UUID from environment
                 let launchUUID = await self.launchManager.getOrGenerateLaunchUUID()
+                print("🔑 [ReportPortal] Using launch UUID: \(launchUUID)")
                 Logger.shared.info("Using launch UUID for coordination: \(launchUUID)")
 
                 // Create launch with UUID (or join existing if 409 Conflict)
                 // All workers call this - first succeeds, others get 409 and join
+                print("🚀 [ReportPortal] Attempting to create/join launch...")
+                Logger.shared.info("Attempting to create/join launch with UUID: \(launchUUID)")
                 let launchID = try await reportingService.startLaunchV2(
                     name: enhancedLaunchName,
                     uuid: launchUUID,
@@ -211,7 +217,8 @@ open class RPListener: NSObject, XCTestObservation {
                 // Set coordinated launch ID in LaunchManager
                 await self.launchManager.setLaunchID(launchID)
 
-                Logger.shared.info("Launch ready: \(launchID)")
+                print("✅ [ReportPortal] Launch ready: \(launchID)")
+                Logger.shared.info("Launch ready - using launch ID: \(launchID) (UUID: \(launchUUID))")
             } catch {
                 Logger.shared.error("Failed to get/create launch: \(error.localizedDescription)")
             }
@@ -862,31 +869,36 @@ open class RPListener: NSObject, XCTestObservation {
 
         // Decrement bundle count
         Task {
+            Logger.shared.info("Test bundle finishing...")
             let shouldFinalize = await launchManager.decrementBundleCount()
             let isFinalized = await launchManager.isLaunchFinalized()
+            let activeCount = await launchManager.getActiveBundleCount()
+
+            Logger.shared.info("Bundle count decremented. Active bundles: \(activeCount), Should finalize: \(shouldFinalize), Already finalized: \(isFinalized)")
 
             if shouldFinalize && !isFinalized {
-                // This bundle finished - all workers call finish (tolerant to 404/409)
+                // This is the last bundle - finalize launch (tolerant to 404/409)
                 guard let launchID = await launchManager.getLaunchID() else {
                     Logger.shared.error("Cannot finalize launch: launch ID not found")
                     return
                 }
 
                 let status = await launchManager.getAggregatedStatus()
+                Logger.shared.info("Last bundle finished. Finalizing launch \(launchID) with aggregated status: \(status.rawValue)")
 
                 do {
                     if let asyncService = reportingService {
                         // Use finalizeLaunchV2 with tolerant 404/409 handling
                         // First worker to finish succeeds, others get 404 (acceptable)
                         try await asyncService.finalizeLaunchV2(launchID: launchID, status: status)
-                        Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
                     }
                 } catch {
                     Logger.shared.error("Failed to finalize launch: \(error.localizedDescription)")
                 }
+            } else if isFinalized {
+                Logger.shared.info("Bundle finished, but launch already finalized by another worker")
             } else {
-                let activeCount = await launchManager.getActiveBundleCount()
-                Logger.shared.info("Bundle finished, \(activeCount) bundles still active")
+                Logger.shared.info("Bundle finished. \(activeCount) bundles still active, waiting for them to complete...")
             }
         }
     }

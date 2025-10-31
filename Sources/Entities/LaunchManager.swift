@@ -55,6 +55,44 @@ actor LaunchManager {
     /// Launch start timestamp
     private var launchStartTime: Date?
 
+    /// Cached launch UUID for coordination
+    private var launchUUID: String?
+
+    // MARK: - UUID Generation
+
+    /// Get or generate launch UUID for coordination
+    /// - Returns: UUID from environment variable or auto-generated
+    func getOrGenerateLaunchUUID() async -> String {
+        // Return cached UUID if available
+        if let cached = launchUUID {
+            return cached
+        }
+
+        // Priority 1: Check environment variable RP_LAUNCH_UUID
+        if let envUUID = ProcessInfo.processInfo.environment["RP_LAUNCH_UUID"],
+           !envUUID.isEmpty {
+            launchUUID = envUUID
+            return envUUID
+        }
+
+        // Priority 2: Auto-generate UUID based on PGID
+        let generatedUUID = generateLaunchUUID()
+        launchUUID = generatedUUID
+        return generatedUUID
+    }
+
+    /// Generate launch UUID using format: {launchName}_{timestamp}_{PGID}
+    /// - Returns: Generated UUID string
+    private func generateLaunchUUID() -> String {
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let pgid = getpgid(getpid())
+
+        // Use a generic launch name if not available
+        let launchName = "Launch"
+
+        return "\(launchName)_\(timestamp)_\(pgid)"
+    }
+
     // MARK: - Bundle Lifecycle
 
     /// Increment active bundle counter when test bundle starts

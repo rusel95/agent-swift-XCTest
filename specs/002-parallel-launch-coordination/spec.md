@@ -32,6 +32,40 @@
 
 ---
 
+---
+
+## Clarifications
+
+### Session 2025-01-31
+
+- Q: Should we use Multi-Launch + Merge strategy (each worker creates its own launch, last worker merges) OR Single Shared Launch strategy (primary worker creates one launch, all workers share it)? → A: Single Shared Launch (Strategy B)
+  - **Rationale**: Both strategies require sync file coordination, so complexity is similar. The Single Shared Launch approach is simpler because:
+    - No merge API call needed (eliminates merge failure scenarios)
+    - Fewer API calls overall (one launch creation vs N launches + merge)
+    - Simpler error handling (no partial merge failures)
+    - Faster coordination (workers can start reporting immediately after reading shared Launch ID)
+    - Matches actual implementation in LaunchCoordinator.swift (already implemented this way)
+  - **Implementation**: Primary worker obtains POSIX flock, creates ONE Launch, writes Launch ID to sync file. Secondary workers poll sync file, read shared Launch ID, report to same Launch. Last worker finalizes Launch.
+
+- Q: Can ReportPortal API query existing IN_PROGRESS launches to avoid file-based coordination? → A: Yes, but with caveats (Hybrid approach recommended)
+  - **API Discovery**: ReportPortal supports filtering launches by status via `GET /v1/{projectKey}/launch?filter.eq.status=IN_PROGRESS&filter.eq.name={launchName}`
+  - **Race Condition Risk**: Two devices querying simultaneously can both see "no launch exists" and create duplicates (no atomic get-or-create)
+  - **Recommended Strategy**: Hybrid approach:
+    1. **Query API first** for existing IN_PROGRESS launch (eliminates coordination when workers start with time delay)
+    2. **Fall back to file lock** if no launch found AND on simulators (prevents race conditions)
+    3. **Accept duplication** if on real devices (simpler than network coordination, can merge later)
+  - **Benefits**:
+    - Optimizes common case (workers start 20s apart → 2nd worker finds 1st worker's launch via API)
+    - Eliminates file coordination overhead when API query succeeds
+    - Works cross-platform (real devices can query API even without shared files)
+    - Maintains race condition prevention on simulators via file lock fallback
+  - **Implementation Options**:
+    - **Option 1 (Hybrid)**: Try API query → if found use it, if not found use file lock (simulators) or create new (devices)
+    - **Option 2 (API-only + duplication)**: Try API query → if not found create new, accept multiple launches on real devices
+    - **Option 3 (Current)**: File lock only (simulators work, real devices create separate launches)
+
+---
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Single Launch Creation Across Simulator Workers (Priority: P1)
@@ -167,23 +201,23 @@ As a test developer, when coordination fails due to system limitations (network 
 - **FR-012**: System MUST complete coordination handshake (Launch creation + ID distribution) within 10 seconds
 - **FR-013**: System MUST provide clear logging of coordination events for debugging
 - **FR-014**: System MUST handle workers starting with time delays (late joiners can use shared Launch)
-- **FR-015**: For PARALLEL/SIMULATOR mode: System MUST use Multi-Launch with ReportPortal v2 Merge API coordination mechanism where each worker creates its own launch via `POST /v2/{projectName}/launch`, tracks launch IDs in shared `/tmp` file, and last worker merges all launches via `POST /v2/{projectName}/launch/merge` into single unified launch
-- **FR-016**: System MUST support worker count detection via environment variable `RP_PARALLEL_WORKERS=N` (primary method, user sets in Xcode scheme) with fallback to timeout-based detection (30 seconds of no new workers indicates all workers have joined) when environment variable not set
+- **FR-015**: For PARALLEL/SIMULATOR mode: System MUST use file-based coordination with POSIX flock to ensure only ONE Launch is created, with primary worker creating Launch and secondary workers discovering shared Launch ID from sync file
+- **FR-016**: System MUST support manual Launch pre-creation via environment variable `RP_LAUNCH_ID` as escape hatch for CI/CD or advanced users (takes priority over file-based coordination)
 - **FR-017**: Workers MUST be able to report test results continuously throughout execution without blocking coordination
-- **FR-018**: System MUST prevent race conditions when multiple simulators attempt to create Launch simultaneously
-- **FR-019**: System MUST prevent premature Launch finalization when fast workers complete before slow workers
-- **FR-020**: System MUST clean up coordination resources after Launch finalization
-- **FR-021**: System MUST support manual Launch pre-creation via environment variable (RP_LAUNCH_ID) as escape hatch for advanced users
-- **FR-022**: System MUST detect parallel execution mode and use appropriate API: v2 async API for parallel/simulator runs (launches, logs, merge) for non-blocking operations, v1 sync API for sequential runs for simplicity and backward compatibility
-- **FR-023**: System MUST detect parallel execution mode by checking for multiple workers in same test run (via PGID or worker count detection)
-- **FR-024**: For PARALLEL/SIMULATOR runs: System MUST call `POST /v2/{projectName}/launch` for creating individual worker launches with proper naming and session identification
-- **FR-025**: For PARALLEL/SIMULATOR runs: System MUST call `PUT /v2/{projectName}/launch/{launchId}/finish` for individual worker launch finalization after all tests complete
-- **FR-026**: For PARALLEL/SIMULATOR runs: System MUST call `POST /v2/{projectName}/launch/merge` with merge type "DEEP" to intelligently consolidate matching test items from all worker launches
+- **FR-018**: System MUST prevent race conditions when multiple simulators attempt to create Launch simultaneously using POSIX flock (LOCK_EX | LOCK_NB)
+- **FR-019**: System MUST prevent premature Launch finalization when fast workers complete before slow workers using bundle reference counting in LaunchManager
+- **FR-020**: System MUST clean up coordination resources after Launch finalization (lock file and sync file)
+- **FR-021**: System MUST detect parallel execution mode and use appropriate API: v2 async API for parallel/simulator runs (launches, logs) for non-blocking operations, v1 sync API for sequential runs for simplicity and backward compatibility
+- **FR-022**: System MUST detect parallel execution mode by checking for multiple active bundles in same process group (via PGID or RP_SESSION_ID)
+- **FR-023**: For PARALLEL/SIMULATOR runs: Primary worker MUST call `POST /v2/{projectName}/launch` to create ONE shared Launch
+- **FR-024**: For PARALLEL/SIMULATOR runs: Primary worker MUST write Launch ID to sync file `/tmp/reportportal_coordination/launch_{name}_{session}.sync` immediately after creation
+- **FR-025**: For PARALLEL/SIMULATOR runs: Secondary workers MUST poll sync file (100ms intervals, 60s timeout) to discover shared Launch ID
+- **FR-026**: For PARALLEL/SIMULATOR runs: Last worker MUST call `PUT /v2/{projectName}/launch/{launchId}/finish` with aggregated status only after all workers complete
 - **FR-027**: For SEQUENTIAL runs (single worker, any platform): System MAY continue using existing v1 API (`POST /v1/{projectName}/launch`, `PUT /v1/{projectName}/launch/{launchId}/finish`) without coordination overhead
-- **FR-028**: System MUST use v1 force finish API (`PUT /v1/{projectName}/launch/{launchId}/stop`) for cleanup when worker crashes or coordination fails (v2 force finish not available)
-- **FR-029**: For PARALLEL/SIMULATOR runs: System MUST track all created launch IDs in shared `/tmp` file accessible to all simulator workers (using session-based file naming with PGID)
-- **FR-030**: For PARALLEL/SIMULATOR runs: Last worker MUST merge all launches only after confirming all expected workers have finished (based on worker count or timeout)
-- **FR-031**: Merged launch MUST preserve all test results, status aggregation, and timestamps from individual worker launches
+- **FR-028**: System MUST use v1 force finish API (`PUT /v1/{projectName}/launch/{launchId}/stop`) for cleanup when worker crashes or coordination fails (if needed)
+- **FR-029**: For PARALLEL/SIMULATOR runs: System MUST use session-based file naming with PGID for coordination files to isolate different test runs
+- **FR-030**: For PARALLEL/SIMULATOR runs: LaunchManager MUST track active bundle count to determine when last worker completes
+- **FR-031**: Launch MUST aggregate status across all workers following severity hierarchy: FAILED > STOPPED > PASSED
 - **FR-032**: For PARALLEL/SIMULATOR runs: System MUST use `POST /v2/{projectName}/log` for batch log creation to ensure non-blocking async log reporting
 - **FR-033**: For PARALLEL/SIMULATOR runs: System MUST use `POST /v2/{projectName}/log/entry` for single log entry creation when immediate log reporting is needed
 - **FR-034**: For SEQUENTIAL runs (single worker, any platform): System MAY continue using v1 log API (`POST /v1/{projectName}/log`, `POST /v1/{projectName}/log/entry`) without requiring v2 async
@@ -221,83 +255,85 @@ As a test developer, when coordination fails due to system limitations (network 
 
 **Note**: This coordination flow applies ONLY to parallel test runs with multiple workers. Sequential runs (single worker) bypass coordination and use existing v1 API for simplicity.
 
-### High-Level Flow Using v2 Merge API (Parallel Runs Only)
+### High-Level Flow Using Shared Launch ID (Parallel Runs Only)
 
 **Phase 1: Worker Initialization (Parallel)**
 1. Each worker starts independently (Worker 1, 2, 3, 4, 5)
-2. Each worker reads `RP_PARALLEL_WORKERS` environment variable (if set) to know expected worker count
-3. Each worker generates unique worker ID and session ID (based on PGID)
+2. Each worker generates session ID (based on PGID - Process Group ID)
+3. Workers attempt to obtain lock on coordination file
 
-**Phase 2: Individual Launch Creation (Parallel)**
-1. Each worker calls `POST /v2/{projectName}/launch` to create its own Launch
-2. Each worker receives unique Launch ID (e.g., launch-1, launch-2, launch-3, launch-4, launch-5)
-3. Each worker writes its Launch ID to shared tracking file: `/tmp/reportportal_launches_{PGID}.txt`
-4. Workers execute their assigned tests, reporting results to their individual Launches
-   - Test items (suites/tests) created via standard item API
-   - Logs reported via `POST /v2/{projectName}/log` (batch) or `POST /v2/{projectName}/log/entry` (single)
-   - All v2 async APIs used for non-blocking operation
+**Phase 2: Launch Creation (Primary Worker Only)**
+1. **Primary Worker** (first to obtain lock):
+   - Obtains exclusive POSIX flock on `/tmp/reportportal_coordination/launch_{name}_{session}.lock`
+   - Calls `POST /v2/{projectName}/launch` to create ONE Launch
+   - Receives Launch ID from ReportPortal
+   - Writes Launch ID to sync file: `/tmp/reportportal_coordination/launch_{name}_{session}.sync`
+   - Releases lock
+   - Starts executing tests, reporting to the Launch
 
-**Phase 3: Worker Completion (Sequential)**
-1. Worker completes its tests
-2. Worker calls `PUT /v2/{projectName}/launch/{launchId}/finish` to finalize its individual Launch
-3. Worker marks itself as complete in tracking file
-4. Worker checks if it's the last worker:
-   - If `RP_PARALLEL_WORKERS` set: Check if `completed_count == RP_PARALLEL_WORKERS`
-   - If not set: Wait 30 seconds, if no new workers → assume last worker
+2. **Secondary Workers** (failed to obtain lock):
+   - Poll sync file `/tmp/reportportal_coordination/launch_{name}_{session}.sync` 
+   - Read shared Launch ID from sync file (typically within 100-500ms)
+   - Start executing tests, reporting to the SAME Launch
 
-**Phase 4: Launch Merge (Last Worker Only)**
-1. Last worker reads all Launch IDs from tracking file
-2. Last worker calls `POST /v2/{projectName}/launch/merge` with:
-   ```json
-   {
-     "launches": [launch-1, launch-2, launch-3, launch-4, launch-5],
-     "name": "Test Run (Merged)",
-     "mergeType": "DEEP",
-     "mode": "DEFAULT",
-     "extendSuitesDescription": true
-   }
-   ```
-3. ReportPortal merges all launches into single unified Launch
-4. Last worker cleans up tracking file
+**Phase 3: Test Execution (All Workers in Parallel)**
+- All workers execute their assigned tests
+- All workers report test results to the SAME Launch ID
+- Test items (suites/tests) created via standard item API
+- Logs reported via `POST /v2/{projectName}/log` (batch) or `POST /v2/{projectName}/log/entry` (single)
+- All v2 async APIs used for non-blocking operation
+
+**Phase 4: Launch Finalization (Last Worker Only)**
+1. Each worker completes its tests
+2. Each worker decrements active bundle count in LaunchManager
+3. **Last Worker** (when count reaches zero):
+   - Calls `PUT /v2/{projectName}/launch/{launchId}/finish` with aggregated status
+   - Cleans up coordination files (lock and sync files)
 
 **Result**: Single unified Launch in ReportPortal with all test results from all workers
+
+**Key Difference from Merge Approach**: This approach uses a single shared Launch from the start. Workers coordinate via file-based locking to ensure only one Launch is created, then all workers report to it. No merge operation is needed.
 
 ### Error Handling Flow
 
 **If Worker Crashes:**
 1. Other workers continue normally
-2. Last worker detects incomplete worker (no "completed" marker after timeout)
-3. Last worker calls `PUT /v1/{projectName}/launch/{crashedLaunchId}/stop` to force-finish crashed Launch
-4. Last worker merges all launches including force-finished one
+2. All workers continue reporting to the shared Launch
+3. Last surviving worker finalizes Launch with aggregated status
+4. Coordination files cleaned up after finalization
 
-**If Merge Fails:**
-1. Log error with full details
-2. Keep individual launches (users see 5 separate launches)
-3. Do not block test execution
-4. Clear tracking file to prevent retry
+**If Lock File Acquisition Fails:**
+1. Worker retries with exponential backoff (1s, 2s, 4s, 8s)
+2. If all retries fail, worker creates separate Launch and logs warning
+3. Tests continue to execute and report (degraded mode)
 
-**If Tracking File Unavailable:**
-1. Worker creates launch normally
-2. Worker attempts best-effort merge after timeout
-3. If merge not possible, keep individual launch
+**If Sync File Read Fails:**
+1. Secondary worker polls sync file with 100ms intervals
+2. If timeout (60 seconds) expires without Launch ID, worker creates separate Launch
+3. Tests continue to execute and report (degraded mode)
 4. Log warning about coordination failure
+
+**If Coordination Directory Unavailable:**
+1. Worker falls back to creating individual Launch (no coordination)
+2. Log warning about file system access issue
+3. Tests continue to execute and report (degraded mode)
 
 ## Scope *(mandatory)*
 
 ### In Scope
 
 **Parallel Coordination (iOS Simulators ONLY):**
-- ✅ Coordinating Launch creation across multiple parallel **simulator** workers
-- ✅ Distributing shared Launch ID to all **simulator** workers via shared `/tmp` files
-- ✅ Tracking **simulator** worker completion status
+- ✅ Coordinating Launch creation across multiple parallel **simulator** workers via file-based locking
+- ✅ Distributing shared Launch ID to all **simulator** workers via sync file
+- ✅ Tracking **simulator** worker completion status via LaunchManager bundle counting
 - ✅ Coordinating Launch finalization after all **simulator** workers complete
 - ✅ Zero-configuration Xcode integration for **simulators**
 - ✅ iOS Simulator support (local Mac and CI/CD on single VM)
 - ✅ Coordination for 1-20 **simulator** workers
 - ✅ Handling **simulator** workers with variable test counts and finish times
 - ✅ Graceful handling of **simulator** worker crashes
-- ✅ ReportPortal v2 Merge API integration for **simulators**
 - ✅ File-based coordination using host's `/tmp` directory (**simulators** share this)
+- ✅ POSIX flock for exclusive lock acquisition (primary/secondary worker roles)
 
 **Sequential Mode (All Platforms):**
 - ✅ Single worker execution on iOS Simulators (no coordination needed)
@@ -354,7 +390,7 @@ Example scripts will be provided in documentation.
 - **Simulator workers** can read/write files to `/tmp/reportportal_launches_{PGID}.txt` without sandboxing restrictions
 - **Simulator workers** fail independently (one worker crash doesn't crash others)
 - File system on host Mac supports POSIX file locking (`flock`) for coordination
-- ReportPortal v2 async API is available for launches, logs, and merge operations
+- ReportPortal v2 async API is available for launches and logs
 - v2 async APIs provide sufficient performance for non-blocking parallel test reporting
 
 **For Sequential/Any Platform:**
@@ -410,26 +446,23 @@ Example scripts will be provided in documentation.
 ## Open Questions *(optional)*
 
 1. **Timeout Values**: What specific timeout values should be used for:
-   - Worker registration timeout (default: 30 seconds from first worker start)
-   - Launch ID tracking file read timeout (default: 5 seconds)
-   - Merge API call timeout (default: 10 seconds)
+   - Sync file read timeout (default: 60 seconds for secondary workers)
+   - Launch ID polling interval (default: 100ms)
+   - Lock acquisition timeout (default: immediate LOCK_NB non-blocking)
    - Retry delays for coordination failures (default: exponential backoff 1s, 2s, 4s, 8s)
 
-2. **Coordination State Cleanup**: Should coordination files be cleaned up immediately after merge completes or persist for debugging?
+2. **Coordination State Cleanup**: Should coordination files be cleaned up immediately after Launch finalization or persist for debugging?
    - Option A: Immediate cleanup (cleaner, but harder to debug)
    - Option B: Time-based cleanup (keep for 1 hour, then auto-delete)
    - Option C: Manual cleanup command for developers
 
 3. **Partial Failure Handling**: When a worker crashes mid-execution, should the system:
-   - Wait for timeout then merge remaining workers (may delay results)
-   - Detect crash via file staleness and merge immediately (faster but may miss slow workers)
-   - Use force finish API on crashed worker's launch before merging
+   - Wait for all bundles to complete then finalize normally (may delay results if worker is stuck)
+   - Detect crash via timeout and finalize with remaining workers (faster but may miss slow workers)
+   - Use force finish API on remaining tests
 
-4. **Merge Type Selection**: Should DEEP merge be configurable?
-   - Always use DEEP merge (intelligent consolidation)
-   - Allow users to choose BASIC merge via environment variable (simpler, faster)
-
-5. **Launch Naming Strategy**: How should individual worker launches be named before merge?
-   - Include worker index: "Test Run [Worker 1 of 5]"
-   - Include device name: "Test Run [iPhone 15 Pro]"
-   - Include PGID: "Test Run [PGID:12345-Worker-1]"
+4. **Launch Naming Strategy**: How should Launch be named in parallel mode?
+   - Include worker count: "Test Run [5 Workers]"
+   - Include device info: "Test Run [iPhone 15 Pro Simulators]"
+   - Include PGID: "Test Run [PGID:12345]"
+   - Keep simple: Just use base launch name

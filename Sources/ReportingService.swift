@@ -77,24 +77,53 @@ public final class ReportingService: Sendable {
     }
 
     /// Create new launch in ReportPortal (v2 async API)
-    /// Used for parallel test execution
+    /// Used for parallel test execution with UUID coordination
     /// - Parameters:
     ///   - name: Launch name (may include test plan name)
+    ///   - uuid: Optional custom UUID for coordination (if nil, server generates one)
     ///   - tags: Tags from configuration
     ///   - attributes: Metadata (device info, OS version, etc.)
     /// - Returns: Launch ID (UUID string from ReportPortal)
-    func startLaunchV2(name: String, tags: [String], attributes: [[String: String]]) async throws -> String {
+    func startLaunchV2(name: String, uuid: String? = nil, tags: [String], attributes: [[String: String]]) async throws -> String {
         let endPoint = StartLaunchV2EndPoint(
             launchName: name,
+            uuid: uuid,
             tags: tags,
             mode: configuration.launchMode,
             attributes: attributes
         )
 
-        let result: LaunchV2Response = try await httpClientV2.callEndPoint(endPoint)
+        do {
+            let result: LaunchV2Response = try await httpClientV2.callEndPoint(endPoint)
+            Logger.shared.info("Launch created (v2): \(result.id)")
+            return result.id
+        } catch let error as HTTPClientError {
+            // Handle 409 Conflict - launch already exists (expected in parallel mode)
+            if case .httpError(let statusCode, let body) = error, statusCode == 409 {
+                Logger.shared.info("Launch already created by another worker (409 Conflict) - joining existing launch")
 
-        Logger.shared.info("Launch created (v2): \(result.id)")
-        return result.id
+                // Try to extract launch ID from error response
+                if let body = body, let data = body.data(using: .utf8) {
+                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let launchID = json["id"] as? String {
+                        Logger.shared.info("Extracted launch ID from 409 response: \(launchID)")
+                        return launchID
+                    }
+                }
+
+                // Fallback: use the provided UUID
+                if let uuid = uuid {
+                    Logger.shared.info("Using provided UUID as launch ID: \(uuid)")
+                    return uuid
+                }
+
+                // Last resort: throw the original error if we can't determine the launch ID
+                throw error
+            }
+
+            // Re-throw other HTTP errors
+            throw error
+        }
     }
 
     /// Finish launch in ReportPortal (v1 API)

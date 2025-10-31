@@ -120,6 +120,15 @@ actor LaunchManager {
         return launchID
     }
 
+    /// Set launch ID directly (used with LaunchCoordinator for multi-process coordination)
+    /// - Parameter id: The coordinated launch ID from LaunchCoordinator
+    func setLaunchID(_ id: String) {
+        self.launchID = id
+        if self.launchStartTime == nil {
+            self.launchStartTime = Date()
+        }
+    }
+
     /// Wait for launch ID to become available (Swift-like async/await approach)
     /// Instead of polling, this properly awaits the launch creation task
     /// - Parameter timeout: Maximum time to wait in seconds (default: 30)

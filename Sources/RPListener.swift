@@ -859,28 +859,27 @@ open class RPListener: NSObject, XCTestObservation {
             print("🚨 RPListener Configuration Error: Reporting is disabled (PushTestDataToReportPortal=false). Test bundle completion will not be reported to ReportPortal.")
             return
         }
-        
-        // T014: Decrement bundle count and finalize if this is the last bundle
+
+        // Decrement bundle count
         Task {
             let shouldFinalize = await launchManager.decrementBundleCount()
             let isFinalized = await launchManager.isLaunchFinalized()
-            
+
             if shouldFinalize && !isFinalized {
-                // This is the last bundle - finalize the launch
+                // This bundle finished - all workers call finish (tolerant to 404/409)
                 guard let launchID = await launchManager.getLaunchID() else {
                     Logger.shared.error("Cannot finalize launch: launch ID not found")
                     return
                 }
-                
+
                 let status = await launchManager.getAggregatedStatus()
-                
+
                 do {
                     if let asyncService = reportingService {
-                        try await asyncService.finalizeLaunch(launchID: launchID, status: status)
+                        // Use finalizeLaunchV2 with tolerant 404/409 handling
+                        // First worker to finish succeeds, others get 404 (acceptable)
+                        try await asyncService.finalizeLaunchV2(launchID: launchID, status: status)
                         Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
-
-                        // Clean up coordination file after successful finalization
-                        // No cleanup needed for UUID-based coordination (no coordination files)
                     }
                 } catch {
                     Logger.shared.error("Failed to finalize launch: \(error.localizedDescription)")

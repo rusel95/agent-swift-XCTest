@@ -16,6 +16,7 @@ public final class ReportingService: Sendable {
     // MARK: - Properties
 
     private let httpClient: HTTPClient
+    private let httpClientV2: HTTPClient  // v2 API client with corrected base URL
     private let configuration: AgentConfiguration
     private let launchManager: LaunchManager
     private let operationTracker: OperationTracker
@@ -34,10 +35,25 @@ public final class ReportingService: Sendable {
 
         if let client = httpClient {
             self.httpClient = client
+            // For v2, we need to replace v1 with v2 in the base URL
+            // Assume baseURL is: https://server/api/v1/project
+            // We need: https://server/api/v2/project
+            let v2URLString = client.baseURL.absoluteString.replacingOccurrences(of: "/v1/", with: "/v2/")
+            let v2BaseURL = URL(string: v2URLString)!
+            let authPlugin = AuthorizationPlugin(token: configuration.portalToken)
+            self.httpClientV2 = HTTPClient(baseURL: v2BaseURL, plugins: [authPlugin])
         } else {
             let baseURL = configuration.reportPortalURL.appendingPathComponent(configuration.projectName)
             let authPlugin = AuthorizationPlugin(token: configuration.portalToken)
             self.httpClient = HTTPClient(baseURL: baseURL, plugins: [authPlugin])
+
+            // Create v2 client: Replace /v1/ with /v2/ in reportPortalURL
+            let v2URLString = configuration.reportPortalURL.absoluteString.replacingOccurrences(of: "/v1", with: "/v2")
+            guard let v2URL = URL(string: v2URLString) else {
+                fatalError("Failed to construct v2 API URL from: \(configuration.reportPortalURL)")
+            }
+            let baseURLV2 = v2URL.appendingPathComponent(configuration.projectName)
+            self.httpClientV2 = HTTPClient(baseURL: baseURLV2, plugins: [authPlugin])
         }
     }
 

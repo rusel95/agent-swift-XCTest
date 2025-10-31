@@ -22,6 +22,7 @@ struct StartLaunchV2EndPoint: EndPoint {
     ///
     /// - Parameters:
     ///   - launchName: Launch name
+    ///   - uuid: Optional custom UUID for coordination (if nil, server generates one)
     ///   - tags: Tags for the launch
     ///   - mode: Launch mode (DEFAULT or DEBUG)
     ///   - attributes: Custom attributes
@@ -30,6 +31,7 @@ struct StartLaunchV2EndPoint: EndPoint {
     /// Note: Project name is already in the baseURL from httpClientV2
     init(
         launchName: String,
+        uuid: String? = nil,
         tags: [String] = [],
         mode: LaunchMode = .default,
         attributes: [[String: String]] = [],
@@ -39,13 +41,20 @@ struct StartLaunchV2EndPoint: EndPoint {
         self.relativePath = "launch"
 
         // V2 API uses camelCase (not snake_case like v1)
-        self.parameters = [
+        var params: [String: Any] = [
             "name": launchName,
             "description": description,
             "startTime": TimeHelper.currentTimeAsString(),
             "mode": mode.rawValue,
             "attributes": StartLaunchV2EndPoint.formatAttributes(tags: tags, customAttributes: attributes)
         ]
+
+        // Include uuid only if provided (for coordination)
+        if let uuid = uuid {
+            params["uuid"] = uuid
+        }
+
+        self.parameters = params
     }
 
     /// Format attributes for v2 API

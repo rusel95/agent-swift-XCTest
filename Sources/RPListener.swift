@@ -79,8 +79,6 @@ open class RPListener: NSObject, XCTestObservation {
     private let launchManager = LaunchManager.shared
     private let operationTracker = OperationTracker.shared
     private let rootSuiteIDManager = RootSuiteIDManager()
-    private let launchCoordinator = LaunchCoordinator.shared
-    private let fileLogger = FileLogger.shared
 
     /// Enhanced launch name (used for coordination file cleanup)
     private var enhancedLaunchName: String?
@@ -166,12 +164,9 @@ open class RPListener: NSObject, XCTestObservation {
 
         // Log bundle start
         let bundleName = (testBundle.bundlePath as NSString).lastPathComponent
-        Task {
-            await fileLogger.logSeparator("BUNDLE START: \(bundleName)")
-            await fileLogger.log("Bundle started", context: "Bundle")
-        }
+        Logger.shared.info("Bundle started: \(bundleName)")
 
-        // T013: Increment bundle count and create launch if needed
+        // Increment bundle count and create launch if needed
         // For Unit test support: Use semaphore to ensure launch is created BEFORE tests start
         // This prevents race conditions with fast-running unit tests (1-10ms execution time)
         let semaphore = DispatchSemaphore(value: 0)
@@ -200,29 +195,25 @@ open class RPListener: NSObject, XCTestObservation {
                 // Store for cleanup later
                 self.enhancedLaunchName = enhancedLaunchName
 
-                // Use LaunchCoordinator for multi-process coordination
-                // This ensures all workers (from same xcodebuild) share the same Launch ID
-                // Different test runs will have unique Launch IDs (via PGID)
-                let launchID = try await self.launchCoordinator.getOrCreateLaunchID(
-                    launchName: enhancedLaunchName,
-                    createBlock: {
-                        // Create launch via ReportPortal API (only first worker executes this)
-                        return try await reportingService.startLaunch(
-                            name: enhancedLaunchName,
-                            tags: configuration.tags,
-                            attributes: attributes
-                        )
-                    }
+                // UUID-based coordination: Generate or read UUID from environment
+                let launchUUID = await self.launchManager.getOrGenerateLaunchUUID()
+                Logger.shared.info("Using launch UUID for coordination: \(launchUUID)")
+
+                // Create launch with UUID (or join existing if 409 Conflict)
+                // All workers call this - first succeeds, others get 409 and join
+                let launchID = try await reportingService.startLaunchV2(
+                    name: enhancedLaunchName,
+                    uuid: launchUUID,
+                    tags: configuration.tags,
+                    attributes: attributes
                 )
 
                 // Set coordinated launch ID in LaunchManager
                 await self.launchManager.setLaunchID(launchID)
 
                 Logger.shared.info("Launch ready: \(launchID)")
-                await self.fileLogger.logLaunchEvent("Launch ready", launchID: launchID)
             } catch {
                 Logger.shared.error("Failed to get/create launch: \(error.localizedDescription)")
-                await self.fileLogger.logError(error, context: "Launch Creation")
             }
         }
 
@@ -339,12 +330,6 @@ open class RPListener: NSObject, XCTestObservation {
                     - isRoot: \(isRootSuite)
                     - testCount: \(testSuite.testCaseCount)
                     """, correlationID: correlationID)
-                
-                await self.fileLogger.logSuiteEvent(
-                    "Starting (isRoot: \(isRootSuite), tests: \(testSuite.testCaseCount))",
-                    suiteName: testSuite.name,
-                    correlationID: correlationID
-                )
 
                 // For test class suites, wait for root suite ID to be available
                 let rootSuiteID: String?
@@ -394,15 +379,10 @@ open class RPListener: NSObject, XCTestObservation {
                 // Start suite in ReportPortal
                 let apiStartTime = Date()
                 Logger.shared.info("📡 Calling ReportPortal API to create suite...", correlationID: correlationID)
-                
-                // Use LaunchCoordinator to ensure suite is created only once across all workers
-                let suiteID = try await self.launchCoordinator.getOrCreateSuiteID(
-                    suiteName: testSuite.name,
-                    createBlock: {
-                        return try await asyncService.startSuite(operation: operation, launchID: launchID)
-                    }
-                )
-                
+
+                // Create suite directly - no coordination needed (each worker reports its own suites)
+                let suiteID = try await asyncService.startSuite(operation: operation, launchID: launchID)
+
                 let apiDuration = Date().timeIntervalSince(apiStartTime)
                 Logger.shared.info("📡 API call completed in \(Int(apiDuration * 1000))ms", correlationID: correlationID)
 
@@ -488,12 +468,6 @@ open class RPListener: NSObject, XCTestObservation {
                     - className: '\(className)'
                     - Looking for suite: '\(className)'
                     """, correlationID: correlationID)
-                
-                await self.fileLogger.logTestEvent(
-                    "Starting (suite: \(className))",
-                    testName: identifier,
-                    correlationID: correlationID
-                )
 
                 // Get parent suite ID (from current suite context)
                 guard let suiteID = await getCurrentSuiteID(for: className) else {

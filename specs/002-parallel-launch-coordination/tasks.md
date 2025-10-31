@@ -102,26 +102,26 @@
 
 ### Implementation Tasks
 
-- [ ] T008 [US1] Update RPListener.testBundleWillStart for UUID coordination in Sources/RPListener.swift
+- [X] T008 [US1] Update RPListener.testBundleWillStart for UUID coordination in Sources/RPListener.swift
   - Call `await launchManager.getOrGenerateLaunchUUID()` to get shared UUID
   - Pass UUID to `reportingService.startLaunch(uuid: uuid, ...)`
   - Handle 409 response (expected, not error)
   - Store launch ID from response
 
-- [ ] T009 [US1] Remove file lock coordination references from RPListener in Sources/RPListener.swift
+- [X] T009 [US1] Remove file lock coordination references from RPListener in Sources/RPListener.swift
   - Remove any LaunchCoordinator usage (file deleted in T001)
   - Remove any LaunchIdLock usage (file deleted in T002)
   - Simplify to pure UUID-based flow
 
 ### Testing Tasks
 
-- [ ] T010 [P] [US1] Create LaunchManagerTests for UUID generation in ExampleUnitTests/LaunchManagerTests.swift
+- [X] T010 [P] [US1] Create LaunchManagerTests for UUID generation in ExampleUnitTests/LaunchManagerTests.swift
   - Test environment variable reading (RP_LAUNCH_UUID)
   - Test auto-generation format: `{name}_{timestamp}_{PGID}`
   - Test PGID-based uniqueness
   - Test timestamp-based uniqueness
 
-- [ ] T011 [P] [US1] Create CoordinationTests for 409 handling in ExampleUnitTests/CoordinationTests.swift
+- [X] T011 [P] [US1] Create CoordinationTests for 409 handling in ExampleUnitTests/CoordinationTests.swift
   - Mock 409 response from ReportPortal API
   - Verify no exception thrown
   - Verify launch ID extracted correctly
@@ -151,13 +151,13 @@
 
 ### Implementation Tasks
 
-- [ ] T013 [US2] Update RPListener.testBundleDidFinish for tolerant finish in Sources/RPListener.swift
+- [X] T013 [US2] Update RPListener.testBundleDidFinish for tolerant finish in Sources/RPListener.swift
   - Get aggregated status from LaunchManager
   - All workers call `reportingService.finishLaunch(launchID, status)`
   - Handle 404/409 responses (expected, not error)
   - Log as INFO: "Launch finished" or "Already finished by another worker"
 
-- [ ] T014 [US2] Update LaunchManager to calculate aggregated status in Sources/Entities/LaunchManager.swift
+- [X] T014 [US2] Update LaunchManager to calculate aggregated status in Sources/Entities/LaunchManager.swift
   - Track bundle statuses as they update
   - Implement status hierarchy: FAILED > STOPPED > PASSED
   - Return worst status across all bundles
@@ -165,13 +165,13 @@
 
 ### Testing Tasks
 
-- [ ] T015 [P] [US2] Add tests for 404 finish handling in ExampleUnitTests/CoordinationTests.swift
+- [X] T015 [P] [US2] Add tests for 404 finish handling in ExampleUnitTests/CoordinationTests.swift
   - Mock 404 response on finish call
   - Verify no exception thrown
   - Verify treated as success
   - Verify INFO-level logging
 
-- [ ] T016 [P] [US2] Add tests for aggregated status calculation in ExampleUnitTests/LaunchManagerTests.swift
+- [X] T016 [P] [US2] Add tests for aggregated status calculation in ExampleUnitTests/LaunchManagerTests.swift
   - Test status hierarchy: FAILED > STOPPED > PASSED
   - Test multiple bundles with different statuses
   - Verify correct aggregated result

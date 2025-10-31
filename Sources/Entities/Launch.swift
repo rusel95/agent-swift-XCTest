@@ -13,6 +13,12 @@ struct FirstLaunch: Decodable  {
     let number: Int
 }
 
+/// v2 API Launch response (async API)
+/// v2 only returns id, no number field
+struct LaunchV2Response: Decodable {
+    let id: String
+}
+
 struct Launch: Decodable  {
     let owner: String?
     let share: Bool?

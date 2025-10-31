@@ -1,0 +1,420 @@
+openapi: 3.0.3
+info:
+  title: ReportPortal v2 API Contract
+  description: |
+    ReportPortal v2 API endpoints used for parallel test coordination.
+    This contract covers the async API used for multi-worker test reporting.
+  version: 5.0.0
+  contact:
+    name: ReportPortal
+    url: https://reportportal.io
+
+servers:
+  - url: https://{reportportal-host}/api/v2
+    description: ReportPortal v2 API
+    variables:
+      reportportal-host:
+        default: demo.reportportal.io
+        description: ReportPortal server hostname
+
+paths:
+  /{projectName}/launch:
+    post:
+      summary: Create Launch (v2 async)
+      description: |
+        Creates a new Launch for test reporting. In parallel mode, each worker
+        creates its own Launch, which are later merged using the merge endpoint.
+      operationId: startLaunchV2
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartLaunchRequest'
+      responses:
+        '201':
+          description: Launch created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaunchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /{projectName}/launch/{launchId}/finish:
+    put:
+      summary: Finish Launch (v2 async)
+      description: |
+        Finalizes a Launch after all tests complete. Sets end time and final status.
+      operationId: finishLaunchV2
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+        - $ref: '#/components/parameters/LaunchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinishLaunchRequest'
+      responses:
+        '200':
+          description: Launch finished successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /{projectName}/launch/merge:
+    post:
+      summary: Merge Multiple Launches
+      description: |
+        Merges multiple worker launches into a single unified Launch.
+        Used by the last worker to consolidate all parallel worker results.
+
+        Merge Types:
+        - BASIC: Simple concatenation of launches
+        - DEEP: Intelligent merge with matching test items consolidated
+      operationId: mergeLaunches
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MergeLaunchesRequest'
+      responses:
+        '200':
+          description: Launches merged successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaunchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /{projectName}/log:
+    post:
+      summary: Create Batch Logs (v2 async)
+      description: |
+        Creates multiple log entries in a single batch request.
+        Non-blocking async operation for high-throughput parallel reporting.
+      operationId: createBatchLogs
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchLogRequest'
+      responses:
+        '201':
+          description: Logs created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchLogResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /{projectName}/log/entry:
+    post:
+      summary: Create Single Log Entry (v2 async)
+      description: |
+        Creates a single log entry. Used when immediate log reporting is needed.
+      operationId: createLogEntry
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogEntryRequest'
+      responses:
+        '201':
+          description: Log entry created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+components:
+  parameters:
+    ProjectName:
+      name: projectName
+      in: path
+      required: true
+      description: Project name in ReportPortal
+      schema:
+        type: string
+        example: default_personal
+
+    LaunchId:
+      name: launchId
+      in: path
+      required: true
+      description: UUID of the Launch
+      schema:
+        type: string
+        format: uuid
+        example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+  schemas:
+    StartLaunchRequest:
+      type: object
+      required:
+        - name
+        - startTime
+        - mode
+      properties:
+        name:
+          type: string
+          description: Launch name
+          example: iOS Parallel Tests
+        description:
+          type: string
+          description: Launch description
+          example: Parallel test execution with 5 workers
+        startTime:
+          type: string
+          format: date-time
+          description: Launch start time (ISO 8601)
+          example: '2025-01-30T10:30:00Z'
+        mode:
+          type: string
+          enum: [DEFAULT, DEBUG]
+          description: Launch mode
+          default: DEFAULT
+        attributes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attribute'
+          description: Tags and metadata
+        rerun:
+          type: boolean
+          description: Whether this is a rerun
+          default: false
+
+    FinishLaunchRequest:
+      type: object
+      required:
+        - endTime
+      properties:
+        endTime:
+          type: string
+          format: date-time
+          description: Launch end time (ISO 8601)
+          example: '2025-01-30T10:35:00Z'
+        status:
+          type: string
+          enum: [PASSED, FAILED, STOPPED, INTERRUPTED]
+          description: Final launch status
+          example: PASSED
+
+    MergeLaunchesRequest:
+      type: object
+      required:
+        - launches
+        - name
+        - mergeType
+      properties:
+        launches:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Array of Launch UUIDs to merge
+          example:
+            - a1b2c3d4-e5f6-7890-abcd-ef1234567890
+            - b2c3d4e5-f6a7-8901-bcde-f12345678901
+          minItems: 2
+        name:
+          type: string
+          description: Name for merged launch
+          example: iOS Parallel Tests (Merged)
+        mergeType:
+          type: string
+          enum: [BASIC, DEEP]
+          description: |
+            Merge strategy:
+            - BASIC: Simple concatenation
+            - DEEP: Intelligent matching and consolidation
+          default: DEEP
+        mode:
+          type: string
+          enum: [DEFAULT, DEBUG]
+          description: Merged launch mode
+          default: DEFAULT
+        description:
+          type: string
+          description: Description for merged launch
+        attributes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attribute'
+        extendSuitesDescription:
+          type: boolean
+          description: Whether to extend suite descriptions with worker info
+          default: true
+
+    BatchLogRequest:
+      type: object
+      required:
+        - logs
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogEntryRequest'
+          description: Array of log entries to create
+          minItems: 1
+          maxItems: 100
+
+    LogEntryRequest:
+      type: object
+      required:
+        - launchUuid
+        - time
+        - level
+        - message
+      properties:
+        launchUuid:
+          type: string
+          format: uuid
+          description: Launch UUID
+        itemUuid:
+          type: string
+          format: uuid
+          description: Test item UUID (optional for launch-level logs)
+        time:
+          type: string
+          format: date-time
+          description: Log timestamp
+        level:
+          type: string
+          enum: [ERROR, WARN, INFO, DEBUG, TRACE]
+          description: Log level
+          default: INFO
+        message:
+          type: string
+          description: Log message
+        file:
+          $ref: '#/components/schemas/FileAttachment'
+
+    LaunchResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Launch UUID
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+        number:
+          type: integer
+          description: Launch number (auto-incremented)
+          example: 42
+
+    OperationResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Operation result message
+          example: Launch finished successfully
+
+    BatchLogResponse:
+      type: object
+      properties:
+        responses:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogResponse'
+
+    LogResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Log entry UUID
+
+    Attribute:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Attribute key
+          example: worker
+        value:
+          type: string
+          description: Attribute value
+          example: worker-1
+
+    FileAttachment:
+      type: object
+      properties:
+        name:
+          type: string
+          description: File name
+        content:
+          type: string
+          format: byte
+          description: Base64-encoded file content
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Invalid request parameters
+
+    Unauthorized:
+      description: Unauthorized - invalid or missing authentication
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Authentication required
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Launch not found
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: ReportPortal API token
+
+security:
+  - BearerAuth: []

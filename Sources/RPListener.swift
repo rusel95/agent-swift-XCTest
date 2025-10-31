@@ -79,6 +79,11 @@ open class RPListener: NSObject, XCTestObservation {
     private let launchManager = LaunchManager.shared
     private let operationTracker = OperationTracker.shared
     private let rootSuiteIDManager = RootSuiteIDManager()
+    private let launchCoordinator = LaunchCoordinator.shared
+    private let fileLogger = FileLogger.shared
+
+    /// Enhanced launch name (used for coordination file cleanup)
+    private var enhancedLaunchName: String?
     
     public override init() {
         super.init()
@@ -149,7 +154,7 @@ open class RPListener: NSObject, XCTestObservation {
     
     public func testBundleWillStart(_ testBundle: Bundle) {
         let configuration = readConfiguration(from: testBundle)
-        
+
         guard configuration.shouldSendReport else {
             print("Set 'YES' for 'PushTestDataToReportPortal' property in Info.plist if you want to put data to report portal")
             return
@@ -158,16 +163,25 @@ open class RPListener: NSObject, XCTestObservation {
         // Create service for v4.0.0 async/await parallel execution
         let reportingService = ReportingService(configuration: configuration)
         self.reportingService = reportingService
-        
+
+        // Log bundle start
+        let bundleName = (testBundle.bundlePath as NSString).lastPathComponent
+        Task {
+            await fileLogger.logSeparator("BUNDLE START: \(bundleName)")
+            await fileLogger.log("Bundle started", context: "Bundle")
+        }
+
         // T013: Increment bundle count and create launch if needed
-        // Use Task.detached with high priority to ensure launch creation happens immediately
-        // Note: XCTest observation methods are synchronous, so we can't await here
-        // Subsequent method calls will wait for launch ID via actor isolation
+        // For Unit test support: Use semaphore to ensure launch is created BEFORE tests start
+        // This prevents race conditions with fast-running unit tests (1-10ms execution time)
+        let semaphore = DispatchSemaphore(value: 0)
+
         Task.detached(priority: .high) {
+            defer { semaphore.signal() }
+
             await self.launchManager.incrementBundleCount()
 
-            // Create launch task (may or may not be used depending on race conditions)
-            let launchTask = Task<String, Error> {
+            do {
                 // Collect metadata attributes
                 let attributes: [[String: String]]
                 if let bundle = testBundle as Bundle? {
@@ -183,21 +197,52 @@ open class RPListener: NSObject, XCTestObservation {
                     testPlanName: testPlanName
                 )
 
-                // Create launch via ReportPortal API
-                return try await reportingService.startLaunch(
-                    name: enhancedLaunchName,
-                    tags: configuration.tags,
-                    attributes: attributes
-                )
-            }
+                // Store for cleanup later
+                self.enhancedLaunchName = enhancedLaunchName
 
-            do {
-                // Pass task to actor - it will decide whether to use it or await existing task
-                let launchID = try await self.launchManager.getOrAwaitLaunchID(launchTask: launchTask)
+                Logger.shared.info("""
+                    🔀 Execution Mode: AUTO-DETECT (Zero-Configuration)
+                    - Strategy: File-based coordination with automatic primary/secondary role assignment
+                    - API Version: v2 (async)
+                    - Session ID: \(SessionHelper.generateSessionID())
+                    - Coordination Path: \(CoordinationPaths.coordinationDirectory.path)
+                    """)
+
+                // Use LaunchCoordinator for automatic multi-process coordination
+                // This works for BOTH sequential and parallel execution without configuration:
+                // - Sequential (1 worker): Gets lock, becomes primary, creates Launch
+                // - Parallel (N workers): First gets lock (primary), others read Launch ID (secondary)
+                // Different test runs will have unique Launch IDs (via PGID-based session ID)
+                let launchID = try await self.launchCoordinator.getOrCreateLaunchID(
+                    launchName: enhancedLaunchName,
+                    createBlock: {
+                        // Create launch via ReportPortal v2 API (only primary worker executes this)
+                        // v2 API is used for async coordination (works for both sequential and parallel)
+                        Logger.shared.info("Creating Launch via v2 API (async)")
+                        return try await reportingService.startLaunchV2(
+                            name: enhancedLaunchName,
+                            tags: configuration.tags,
+                            attributes: attributes
+                        )
+                    }
+                )
+
+                // Set coordinated launch ID in LaunchManager
+                await self.launchManager.setLaunchID(launchID)
+
                 Logger.shared.info("Launch ready: \(launchID)")
+                await self.fileLogger.logLaunchEvent("Launch ready", launchID: launchID)
             } catch {
                 Logger.shared.error("Failed to get/create launch: \(error.localizedDescription)")
+                await self.fileLogger.logError(error, context: "Launch Creation")
             }
+        }
+
+        // Wait for launch creation to complete (max 10 seconds)
+        // This ensures launch exists before any suites/tests start
+        let waitResult = semaphore.wait(timeout: .now() + 10)
+        if waitResult == .timedOut {
+            Logger.shared.warning("Launch creation timed out after 10 seconds. Tests will continue but may not be tracked.")
         }
     }
     
@@ -250,15 +295,35 @@ open class RPListener: NSObject, XCTestObservation {
         {
             return
         }
+
+        // Skip framework's own unit test suites (they test RPListener itself and create mock launch IDs)
+        if testSuite.name == "LaunchManagerTests" || testSuite.name == "OperationTrackerTests" {
+            Logger.shared.info("⚠️ Skipping framework unit test suite: \(testSuite.name)")
+            return
+        }
+
+        // Detect if this is a unit test suite (fast tests that need synchronization)
+        // Unit tests can complete in 1-11ms, while API calls take 200-500ms
+        // UI tests take 7-14 seconds, so they don't need blocking
+        let isUnitTestSuite = testSuite.name.contains("UnitTests") && !testSuite.name.contains("UITests")
         
+        // For unit tests: Use semaphore to ensure suite is created BEFORE tests start
+        // This prevents race conditions with fast-running unit tests
+        let semaphore: DispatchSemaphore? = isUnitTestSuite ? DispatchSemaphore(value: 0) : nil
+
         // T015: Register suite with OperationTracker for parallel execution
-        Task {
+        Task.detached(priority: .high) {
+            defer {
+                // Signal completion for unit tests
+                semaphore?.signal()
+            }
+
             // Wait for launch ID (properly awaits task, no polling)
             let launchID: String
             do {
-                launchID = try await waitForLaunchID()
+                launchID = try await self.waitForLaunchID()
             } catch {
-                let bundleCount = await launchManager.getActiveBundleCount()
+                let bundleCount = await self.launchManager.getActiveBundleCount()
                 Logger.shared.error("""
                     ❌ SUITE REGISTRATION FAILED: '\(testSuite.name)'
                     Reason: \(error.localizedDescription)
@@ -268,7 +333,7 @@ open class RPListener: NSObject, XCTestObservation {
                     """)
                 return
             }
-            
+
             do {
                 let correlationID = UUID()
                 let isRootSuite = testSuite.name.contains(".xctest")
@@ -286,25 +351,34 @@ open class RPListener: NSObject, XCTestObservation {
                     - isRoot: \(isRootSuite)
                     - testCount: \(testSuite.testCaseCount)
                     """, correlationID: correlationID)
+                
+                await self.fileLogger.logSuiteEvent(
+                    "Starting (isRoot: \(isRootSuite), tests: \(testSuite.testCaseCount))",
+                    suiteName: testSuite.name,
+                    correlationID: correlationID
+                )
 
                 // For test class suites, wait for root suite ID to be available
                 let rootSuiteID: String?
                 if !isRootSuite {
-                    // Wait for root suite to be created (increased timeout for slow networks)
+                    // Wait for root suite to be created (short timeout - if not created quickly, skip it)
                     Logger.shared.info("⏳ Waiting for root suite to be created...", correlationID: correlationID)
                     do {
-                        let id = try await rootSuiteIDManager.waitForRootSuiteID(timeout: 30)
+                        let id = try await self.rootSuiteIDManager.waitForRootSuiteID(timeout: 3) // Reduced from 30s to 3s
                         rootSuiteID = id
                         Logger.shared.info("✅ Root suite ID found: \(id)", correlationID: correlationID)
                     } catch {
+                        // Root suite not created - this can happen in parallel execution
+                        // when XCTest skips bundle-level suite callbacks
+                        // Solution: Make this a root-level suite instead
                         rootSuiteID = nil
-                        Logger.shared.error("""
-                            [RACE] ❌ ROOT SUITE TIMEOUT:
+                        Logger.shared.warning("""
+                            [PARALLEL] ⚠️ ROOT SUITE NOT FOUND (creating standalone suite):
                             - Test class suite: '\(testSuite.name)'
                             - Error: \(error.localizedDescription)
-                            - Waited 30 seconds for root suite to be created
-                            - This will cause incorrect hierarchy (suite at root level)
-                            - Check ReportPortal connectivity and performance
+                            - Waited 3 seconds for root suite to be created
+                            - This happens when XCTest skips bundle callbacks in parallel execution
+                            - Solution: Creating suite at root level (no parent)
                             """, correlationID: correlationID)
                     }
                 } else {
@@ -325,30 +399,44 @@ open class RPListener: NSObject, XCTestObservation {
                 )
 
                 // Register suite in tracker with consistent identifier
-                await operationTracker.registerSuite(operation, identifier: identifier)
+                await self.operationTracker.registerSuite(operation, identifier: identifier)
 
                 Logger.shared.info("✅ Suite registered: '\(identifier)' → ID: pending", correlationID: correlationID)
 
                 // Start suite in ReportPortal
+                // Note: Each worker creates its own suites (no coordination needed)
+                // All suites report to the same shared Launch
                 let apiStartTime = Date()
                 Logger.shared.info("📡 Calling ReportPortal API to create suite...", correlationID: correlationID)
+
                 let suiteID = try await asyncService.startSuite(operation: operation, launchID: launchID)
+
                 let apiDuration = Date().timeIntervalSince(apiStartTime)
                 Logger.shared.info("📡 API call completed in \(Int(apiDuration * 1000))ms", correlationID: correlationID)
 
                 // Update operation with suite ID
                 operation.suiteID = suiteID
-                await operationTracker.updateSuite(operation, identifier: identifier)
+                await self.operationTracker.updateSuite(operation, identifier: identifier)
 
                 // Store root suite ID if this is root
                 if isRootSuite {
-                    await rootSuiteIDManager.setRootSuiteID(suiteID)
+                    await self.rootSuiteIDManager.setRootSuiteID(suiteID)
                     Logger.shared.info("🎯 Root suite ID stored: \(suiteID)", correlationID: correlationID)
                 }
 
                 Logger.shared.info("✅ Suite started: \(suiteID)", correlationID: correlationID)
             } catch {
                 Logger.shared.error("Failed to start suite '\(testSuite.name)': \(error.localizedDescription)")
+            }
+        }
+        
+        // For unit tests: Wait for suite creation to complete before tests start
+        // This prevents race conditions with fast tests (1-11ms) finishing before API calls (200-500ms)
+        // UI tests don't need this - they're slow enough (7-14s) that async creation completes in time
+        if let semaphore = semaphore {
+            let waitResult = semaphore.wait(timeout: .now() + 10)
+            if waitResult == .timedOut {
+                Logger.shared.warning("⚠️ Suite creation timed out after 10 seconds for: \(testSuite.name)")
             }
         }
     }
@@ -359,8 +447,20 @@ open class RPListener: NSObject, XCTestObservation {
             print("🚨 RPListener Configuration Error: Reporting is disabled (PushTestDataToReportPortal=false). Test case '\(testCase.name)' will not be reported to ReportPortal.")
             return
         }
-        
+
+        // Skip framework's own unit tests (they test RPListener itself)
+        let className = String(describing: type(of: testCase))
+        if className == "LaunchManagerTests" || className == "OperationTrackerTests" {
+            return
+        }
+
         // T019: Register test case with OperationTracker for parallel execution
+        // Note: Test tracking is async (best effort) - no semaphore synchronization here
+        // Rationale:
+        // - Bundle and Suite are already synchronized (critical points)
+        // - Tests run inside Suite, so Suite already exists
+        // - Synchronizing every test would slow down test execution significantly
+        // - For very fast tests (1-10ms), async tracking is acceptable trade-off
         Task {
             // Wait for launch ID (properly awaits task, no polling)
             let launchID: String
@@ -396,6 +496,12 @@ open class RPListener: NSObject, XCTestObservation {
                     - className: '\(className)'
                     - Looking for suite: '\(className)'
                     """, correlationID: correlationID)
+                
+                await self.fileLogger.logTestEvent(
+                    "Starting (suite: \(className))",
+                    testName: identifier,
+                    correlationID: correlationID
+                )
 
                 // Get parent suite ID (from current suite context)
                 guard let suiteID = await getCurrentSuiteID(for: className) else {
@@ -526,7 +632,13 @@ open class RPListener: NSObject, XCTestObservation {
             print("🚨 RPListener Configuration Error: Reporting is disabled (PushTestDataToReportPortal=false). Test issue for '\(testCase.name)' will not be reported to ReportPortal.")
             return
         }
-        
+
+        // Skip framework's own unit tests (they test RPListener itself)
+        let className = String(describing: type(of: testCase))
+        if className == "LaunchManagerTests" || className == "OperationTrackerTests" {
+            return
+        }
+
         // T022: Async attachment upload for concurrent execution
         Task {
             // Wait for launch ID (don't drop early failures)
@@ -606,7 +718,13 @@ open class RPListener: NSObject, XCTestObservation {
             print("🚨 RPListener Configuration Error: Reporting is disabled (PushTestDataToReportPortal=false). Test failure for '\(testCase.name)' will not be reported to ReportPortal.")
             return
         }
-        
+
+        // Skip framework's own unit tests (they test RPListener itself)
+        let className = String(describing: type(of: testCase))
+        if className == "LaunchManagerTests" || className == "OperationTrackerTests" {
+            return
+        }
+
         // T022: Async attachment upload for concurrent execution
         Task {
             // Wait for launch ID (don't drop early failures)
@@ -683,7 +801,13 @@ open class RPListener: NSObject, XCTestObservation {
             print("🚨 RPListener Configuration Error: Reporting is disabled (PushTestDataToReportPortal=false). Test completion for '\(testCase.name)' will not be reported to ReportPortal.")
             return
         }
-        
+
+        // Skip framework's own unit tests (they test RPListener itself)
+        let className = String(describing: type(of: testCase))
+        if className == "LaunchManagerTests" || className == "OperationTrackerTests" {
+            return
+        }
+
         // T020: Finalize test with status update and cleanup
         Task {
             // Build identifier
@@ -731,7 +855,12 @@ open class RPListener: NSObject, XCTestObservation {
         {
             return
         }
-        
+
+        // Skip framework's own unit test suites (they test RPListener itself)
+        if testSuite.name == "LaunchManagerTests" || testSuite.name == "OperationTrackerTests" {
+            return
+        }
+
         // T016: Finalize suite with OperationTracker
         Task {
             let identifier = testSuite.name
@@ -765,31 +894,55 @@ open class RPListener: NSObject, XCTestObservation {
             return
         }
         
-        // T014: Decrement bundle count and finalize if this is the last bundle
+        // Decrement bundle count and finalize if this is the last worker
         Task {
             let shouldFinalize = await launchManager.decrementBundleCount()
             let isFinalized = await launchManager.isLaunchFinalized()
-            
+
+            // Log worker completion
+            await fileLogger.logWorkerCompleted(testCount: 0) // TODO: Track actual test count
+
             if shouldFinalize && !isFinalized {
-                // This is the last bundle - finalize the launch
+                // This is the LAST WORKER - finalize the shared Launch
                 guard let launchID = await launchManager.getLaunchID() else {
                     Logger.shared.error("Cannot finalize launch: launch ID not found")
                     return
                 }
-                
+
                 let status = await launchManager.getAggregatedStatus()
-                
+
+                Logger.shared.info("""
+                    🏁 LAST WORKER: Finalizing shared Launch
+                    - Launch ID: \(launchID)
+                    - Status: \(status.rawValue)
+                    - All workers have completed
+                    """)
+
                 do {
                     if let asyncService = reportingService {
-                        try await asyncService.finalizeLaunch(launchID: launchID, status: status)
-                        Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
+                        // Use v2 API for launch finalization (matches launch creation API version)
+                        // This works for both sequential and parallel execution
+                        try await asyncService.finalizeLaunchV2(launchID: launchID, status: status)
+                        Logger.shared.info("Launch finalized (v2): \(launchID) with status: \(status.rawValue)")
+
+                        // Log finalization event
+                        await fileLogger.logLaunchFinalized(launchID: launchID, totalTests: 0) // TODO: Track total
+
+                        // Clean up coordination files after successful finalization
+                        if let launchName = self.enhancedLaunchName {
+                            await self.launchCoordinator.cleanupCoordinationFile(for: launchName)
+                        }
                     }
                 } catch {
                     Logger.shared.error("Failed to finalize launch: \(error.localizedDescription)")
+                    await fileLogger.logCoordinationError(
+                        errorType: "LAUNCH_FINALIZATION_FAILED",
+                        errorMessage: error.localizedDescription
+                    )
                 }
             } else {
                 let activeCount = await launchManager.getActiveBundleCount()
-                Logger.shared.info("Bundle finished, \(activeCount) bundles still active")
+                Logger.shared.info("Bundle finished, \(activeCount) worker(s) still active")
             }
         }
     }

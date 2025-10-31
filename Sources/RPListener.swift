@@ -200,26 +200,14 @@ open class RPListener: NSObject, XCTestObservation {
                 // Store for cleanup later
                 self.enhancedLaunchName = enhancedLaunchName
 
-                Logger.shared.info("""
-                    🔀 Execution Mode: AUTO-DETECT (Zero-Configuration)
-                    - Strategy: File-based coordination with automatic primary/secondary role assignment
-                    - API Version: v2 (async)
-                    - Session ID: \(SessionHelper.generateSessionID())
-                    - Coordination Path: \(CoordinationPaths.coordinationDirectory.path)
-                    """)
-
-                // Use LaunchCoordinator for automatic multi-process coordination
-                // This works for BOTH sequential and parallel execution without configuration:
-                // - Sequential (1 worker): Gets lock, becomes primary, creates Launch
-                // - Parallel (N workers): First gets lock (primary), others read Launch ID (secondary)
-                // Different test runs will have unique Launch IDs (via PGID-based session ID)
+                // Use LaunchCoordinator for multi-process coordination
+                // This ensures all workers (from same xcodebuild) share the same Launch ID
+                // Different test runs will have unique Launch IDs (via PGID)
                 let launchID = try await self.launchCoordinator.getOrCreateLaunchID(
                     launchName: enhancedLaunchName,
                     createBlock: {
-                        // Create launch via ReportPortal v2 API (only primary worker executes this)
-                        // v2 API is used for async coordination (works for both sequential and parallel)
-                        Logger.shared.info("Creating Launch via v2 API (async)")
-                        return try await reportingService.startLaunchV2(
+                        // Create launch via ReportPortal API (only first worker executes this)
+                        return try await reportingService.startLaunch(
                             name: enhancedLaunchName,
                             tags: configuration.tags,
                             attributes: attributes
@@ -404,13 +392,17 @@ open class RPListener: NSObject, XCTestObservation {
                 Logger.shared.info("✅ Suite registered: '\(identifier)' → ID: pending", correlationID: correlationID)
 
                 // Start suite in ReportPortal
-                // Note: Each worker creates its own suites (no coordination needed)
-                // All suites report to the same shared Launch
                 let apiStartTime = Date()
                 Logger.shared.info("📡 Calling ReportPortal API to create suite...", correlationID: correlationID)
-
-                let suiteID = try await asyncService.startSuite(operation: operation, launchID: launchID)
-
+                
+                // Use LaunchCoordinator to ensure suite is created only once across all workers
+                let suiteID = try await self.launchCoordinator.getOrCreateSuiteID(
+                    suiteName: testSuite.name,
+                    createBlock: {
+                        return try await asyncService.startSuite(operation: operation, launchID: launchID)
+                    }
+                )
+                
                 let apiDuration = Date().timeIntervalSince(apiStartTime)
                 Logger.shared.info("📡 API call completed in \(Int(apiDuration * 1000))ms", correlationID: correlationID)
 
@@ -894,55 +886,36 @@ open class RPListener: NSObject, XCTestObservation {
             return
         }
         
-        // Decrement bundle count and finalize if this is the last worker
+        // T014: Decrement bundle count and finalize if this is the last bundle
         Task {
             let shouldFinalize = await launchManager.decrementBundleCount()
             let isFinalized = await launchManager.isLaunchFinalized()
-
-            // Log worker completion
-            await fileLogger.logWorkerCompleted(testCount: 0) // TODO: Track actual test count
-
+            
             if shouldFinalize && !isFinalized {
-                // This is the LAST WORKER - finalize the shared Launch
+                // This is the last bundle - finalize the launch
                 guard let launchID = await launchManager.getLaunchID() else {
                     Logger.shared.error("Cannot finalize launch: launch ID not found")
                     return
                 }
-
+                
                 let status = await launchManager.getAggregatedStatus()
-
-                Logger.shared.info("""
-                    🏁 LAST WORKER: Finalizing shared Launch
-                    - Launch ID: \(launchID)
-                    - Status: \(status.rawValue)
-                    - All workers have completed
-                    """)
-
+                
                 do {
                     if let asyncService = reportingService {
-                        // Use v2 API for launch finalization (matches launch creation API version)
-                        // This works for both sequential and parallel execution
-                        try await asyncService.finalizeLaunchV2(launchID: launchID, status: status)
-                        Logger.shared.info("Launch finalized (v2): \(launchID) with status: \(status.rawValue)")
+                        try await asyncService.finalizeLaunch(launchID: launchID, status: status)
+                        Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
 
-                        // Log finalization event
-                        await fileLogger.logLaunchFinalized(launchID: launchID, totalTests: 0) // TODO: Track total
-
-                        // Clean up coordination files after successful finalization
+                        // Clean up coordination file after successful finalization
                         if let launchName = self.enhancedLaunchName {
                             await self.launchCoordinator.cleanupCoordinationFile(for: launchName)
                         }
                     }
                 } catch {
                     Logger.shared.error("Failed to finalize launch: \(error.localizedDescription)")
-                    await fileLogger.logCoordinationError(
-                        errorType: "LAUNCH_FINALIZATION_FAILED",
-                        errorMessage: error.localizedDescription
-                    )
                 }
             } else {
                 let activeCount = await launchManager.getActiveBundleCount()
-                Logger.shared.info("Bundle finished, \(activeCount) worker(s) still active")
+                Logger.shared.info("Bundle finished, \(activeCount) bundles still active")
             }
         }
     }

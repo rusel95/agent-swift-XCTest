@@ -68,18 +68,18 @@
   - Update body encoding: Include uuid only if non-nil
   - Keep existing fields (name, mode, startTime)
 
-- [ ] T005 Update ReportingService.startLaunch to accept custom UUID in Sources/ReportingService.swift
+- [X] T005 Update ReportingService.startLaunch to accept custom UUID in Sources/ReportingService.swift
   - Add `uuid: String?` parameter to startLaunch method
   - Pass uuid to StartLaunchV2EndPoint
   - Return launch ID from response
 
-- [ ] T006 Implement 409 Conflict handling in ReportingService.startLaunch in Sources/ReportingService.swift
+- [X] T006 Implement 409 Conflict handling in ReportingService.startLaunch in Sources/ReportingService.swift
   - Catch HTTPError where statusCode == 409
   - Extract launch ID from error response or use uuid
   - Log as INFO: "Launch already created by another worker"
   - Return launch ID, do not throw error
 
-- [ ] T007 Implement tolerant finish logic in ReportingService.finishLaunch in Sources/ReportingService.swift
+- [X] T007 Implement tolerant finish logic in ReportingService.finishLaunch in Sources/ReportingService.swift
   - Catch HTTPError where statusCode == 404 || statusCode == 409
   - Log as INFO: "Launch already finished by another worker"
   - Return success (do not throw error)

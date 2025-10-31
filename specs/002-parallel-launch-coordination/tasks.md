@@ -43,8 +43,8 @@
 
 **Goal**: Remove obsolete file lock code, prepare codebase for UUID approach
 
-- [ ] T001 Delete LaunchCoordinator.swift (file lock logic obsolete) in Sources/Entities/LaunchCoordinator.swift
-- [ ] T002 Delete LaunchIdLock.swift (POSIX flock wrapper obsolete) in Sources/Entities/LaunchIdLock.swift
+- [X] T001 Delete LaunchCoordinator.swift (file lock logic obsolete) in Sources/Entities/LaunchCoordinator.swift
+- [X] T002 Delete LaunchIdLock.swift (POSIX flock wrapper obsolete) in Sources/Entities/LaunchIdLock.swift
 
 **Completion Criteria**:
 - ✅ LaunchCoordinator.swift removed from project
@@ -57,13 +57,13 @@
 
 **Goal**: Core UUID infrastructure that all user stories depend on
 
-- [ ] T003 Add UUID generation logic to LaunchManager in Sources/Entities/LaunchManager.swift
+- [X] T003 Add UUID generation logic to LaunchManager in Sources/Entities/LaunchManager.swift
   - Implement `getOrGenerateLaunchUUID() async -> String`
   - Read `RP_LAUNCH_UUID` from ProcessInfo.processInfo.environment
   - If not set: Generate `{launchName}_{timestamp}_{PGID}`
   - Return UUID for coordination
 
-- [ ] T004 [P] Add optional uuid parameter to StartLaunchV2EndPoint in Sources/EndPoints/StartLaunchV2EndPoint.swift
+- [X] T004 [P] Add optional uuid parameter to StartLaunchV2EndPoint in Sources/EndPoints/StartLaunchV2EndPoint.swift
   - Add `uuid: String?` property
   - Update body encoding: Include uuid only if non-nil
   - Keep existing fields (name, mode, startTime)

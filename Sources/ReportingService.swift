@@ -33,28 +33,25 @@ public final class ReportingService: Sendable {
         self.launchManager = launchManager
         self.operationTracker = operationTracker
 
+        let authPlugin = AuthorizationPlugin(token: configuration.portalToken)
+
+        // If httpClient is provided (for testing), use it for v1 API
         if let client = httpClient {
             self.httpClient = client
-            // For v2, we need to replace v1 with v2 in the base URL
-            // Assume baseURL is: https://server/api/v1/project
-            // We need: https://server/api/v2/project
-            let v2URLString = client.baseURL.absoluteString.replacingOccurrences(of: "/v1/", with: "/v2/")
-            let v2BaseURL = URL(string: v2URLString)!
-            let authPlugin = AuthorizationPlugin(token: configuration.portalToken)
-            self.httpClientV2 = HTTPClient(baseURL: v2BaseURL, plugins: [authPlugin])
         } else {
+            // Create v1 client: /api/v1/{projectName}
             let baseURL = configuration.reportPortalURL.appendingPathComponent(configuration.projectName)
-            let authPlugin = AuthorizationPlugin(token: configuration.portalToken)
             self.httpClient = HTTPClient(baseURL: baseURL, plugins: [authPlugin])
-
-            // Create v2 client: Replace /v1/ with /v2/ in reportPortalURL
-            let v2URLString = configuration.reportPortalURL.absoluteString.replacingOccurrences(of: "/v1", with: "/v2")
-            guard let v2URL = URL(string: v2URLString) else {
-                fatalError("Failed to construct v2 API URL from: \(configuration.reportPortalURL)")
-            }
-            let baseURLV2 = v2URL.appendingPathComponent(configuration.projectName)
-            self.httpClientV2 = HTTPClient(baseURL: baseURLV2, plugins: [authPlugin])
         }
+
+        // Always create v2 client from configuration (for both production and test)
+        // Replace /v1 with /v2 in reportPortalURL
+        let v2URLString = configuration.reportPortalURL.absoluteString.replacingOccurrences(of: "/v1", with: "/v2")
+        guard let v2URL = URL(string: v2URLString) else {
+            fatalError("Failed to construct v2 API URL from: \(configuration.reportPortalURL)")
+        }
+        let baseURLV2 = v2URL.appendingPathComponent(configuration.projectName)
+        self.httpClientV2 = HTTPClient(baseURL: baseURLV2, plugins: [authPlugin])
     }
 
     // MARK: - Launch Management
@@ -88,14 +85,13 @@ public final class ReportingService: Sendable {
     /// - Returns: Launch ID (UUID string from ReportPortal)
     func startLaunchV2(name: String, tags: [String], attributes: [[String: String]]) async throws -> String {
         let endPoint = StartLaunchV2EndPoint(
-            projectName: configuration.projectName,
             launchName: name,
             tags: tags,
             mode: configuration.launchMode,
             attributes: attributes
         )
 
-        let result: FirstLaunch = try await httpClient.callEndPoint(endPoint)
+        let result: FirstLaunch = try await httpClientV2.callEndPoint(endPoint)
 
         Logger.shared.info("Launch created (v2): \(result.id)")
         return result.id
@@ -123,12 +119,11 @@ public final class ReportingService: Sendable {
     ///   - status: Aggregated status from LaunchManager
     func finalizeLaunchV2(launchID: String, status: TestStatus) async throws {
         let endPoint = FinishLaunchV2EndPoint(
-            projectName: configuration.projectName,
             launchID: launchID,
             status: status
         )
 
-        let _: LaunchFinish = try await httpClient.callEndPoint(endPoint)
+        let _: LaunchFinish = try await httpClientV2.callEndPoint(endPoint)
 
         // Mark as finalized in LaunchManager
         await launchManager.markFinalized()

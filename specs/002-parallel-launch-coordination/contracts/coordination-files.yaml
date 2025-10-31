@@ -1,0 +1,355 @@
+# File-Based Coordination Contract
+# Defines file formats and protocols for multi-process coordination
+
+version: 1.0.0
+description: |
+  Contract for file-based coordination between parallel test workers.
+  All files are stored in /tmp/reportportal_coordination/ directory
+  which is shared across all iOS simulators running on the same host.
+
+# Directory Structure
+directory:
+  base_path: /tmp/reportportal_coordination/
+  permissions: 0755
+  cleanup_policy: |
+    Files older than 1 hour are automatically cleaned up.
+    Manual cleanup can be triggered via LaunchCoordinator.cleanupCoordinationFile()
+
+# File Types
+files:
+  # Lock File - Determines primary worker
+  lock_file:
+    naming_pattern: "launch_{launchName}_{sessionID}.lock"
+    example: "launch_iOS_Parallel_Tests_test-run-1706659200.lock"
+    purpose: |
+      Exclusive lock file used to determine which worker is primary.
+      Only one process can hold an exclusive flock() on this file.
+    format:
+      type: binary
+      content: empty
+      encoding: n/a
+    operations:
+      - name: Acquire Lock
+        description: Worker attempts to acquire exclusive lock using POSIX flock()
+        system_call: "flock(fd, LOCK_EX | LOCK_NB)"
+        success: Worker becomes Primary, proceeds to create Launch
+        failure: Worker becomes Secondary, waits to read Launch ID from sync file
+      - name: Release Lock
+        description: Primary worker releases lock after all workers complete
+        system_call: "close(fd)"
+        timing: After Launch finalization
+    lifecycle:
+      created_by: First worker to attempt lock acquisition (file created if not exists)
+      locked_by: Primary worker (holds lock until cleanup)
+      deleted_by: Last worker during cleanup phase
+    error_handling:
+      permission_denied: Fall back to separate launch creation with warning
+      file_system_full: Retry with exponential backoff, then fallback
+
+  # Sync File - Stores shared Launch ID
+  sync_file:
+    naming_pattern: "launch_{launchName}_{sessionID}.sync"
+    example: "launch_iOS_Parallel_Tests_test-run-1706659200.sync"
+    purpose: |
+      Stores the ReportPortal Launch ID for all workers to read.
+      Written by primary worker after Launch creation.
+    format:
+      type: text
+      encoding: utf-8
+      line_ending: "\n"
+      structure: |
+        Line 1: ReportPortal Launch UUID
+        Line 2: Writer metadata (workerID:timestamp)
+    schema:
+      line_1:
+        name: launch_uuid
+        type: string
+        format: uuid
+        example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        validation:
+          - not_empty: true
+          - valid_uuid: true
+      line_2:
+        name: writer_metadata
+        type: string
+        format: "{workerID}:{timestamp}"
+        example: "worker-uuid-123:1706659200.123456"
+        validation:
+          - not_empty: true
+          - contains_colon: true
+    operations:
+      - name: Write Launch ID
+        description: Primary worker writes Launch ID after creation
+        method: NSFileCoordinator.coordinate(writingItemAt:)
+        atomicity: atomic write (write to temp file, then rename)
+        timing: Immediately after POST /v2/launch succeeds
+      - name: Read Launch ID
+        description: Secondary workers read Launch ID
+        method: NSFileCoordinator.coordinate(readingItemAt:)
+        retry_policy:
+          max_attempts: 60
+          interval: 100ms
+          timeout: 60 seconds
+        validation:
+          - file_exists: Wait up to 60 seconds for file to appear
+          - content_not_empty: Retry if empty
+          - valid_uuid_format: Parse and validate line 1
+    lifecycle:
+      created_by: Primary worker after Launch creation
+      read_by: All secondary workers (multiple readers allowed)
+      deleted_by: Last worker during cleanup phase
+    error_handling:
+      file_not_found: Wait with timeout (primary may still be creating Launch)
+      invalid_format: Log error, attempt to parse best-effort
+      permission_denied: Fall back to separate launch with warning
+
+  # Event Log - Debugging coordination events
+  event_log:
+    naming_pattern: "events_{pgid}.log"
+    example: "events_12345.log"
+    purpose: |
+      Append-only log of all coordination events for debugging.
+      Shared across all workers in the same process group.
+    format:
+      type: text (JSON Lines)
+      encoding: utf-8
+      line_ending: "\n"
+      structure: One JSON object per line
+    schema:
+      event_entry:
+        type: object
+        required: [timestamp, type, event, workerID]
+        properties:
+          timestamp:
+            type: string
+            format: ISO 8601
+            example: "2025-01-30T10:30:45Z"
+          type:
+            type: string
+            enum: [Launch, Worker, Session, Error]
+            example: "Launch"
+          event:
+            type: string
+            example: "PRIMARY_LOCK_ACQUIRED"
+          workerID:
+            type: string
+            format: uuid
+            example: "worker-uuid-123"
+          launchID:
+            type: string
+            format: uuid
+            optional: true
+            example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+          processID:
+            type: integer
+            optional: true
+            example: 12345
+          testCount:
+            type: integer
+            optional: true
+            example: 25
+          errorMessage:
+            type: string
+            optional: true
+            example: "File lock acquisition failed"
+    operations:
+      - name: Append Event
+        description: Any worker appends coordination event
+        method: NSFileCoordinator.coordinate(writingItemAt:) with .forMerging
+        concurrency: Multiple workers can append concurrently
+        atomicity: Line-level atomicity guaranteed by OS
+    lifecycle:
+      created_by: First worker to log an event
+      appended_by: All workers throughout test execution
+      deleted_by: Manual cleanup or automatic after 1 hour
+    error_handling:
+      permission_denied: Log to console as fallback
+      file_system_full: Skip logging (non-critical)
+
+# Coordination Protocol
+protocol:
+  name: File-Based Launch Coordination
+  version: 1.0
+  phases:
+    - phase: 1
+      name: Role Determination
+      steps:
+        - step: 1
+          action: Worker attempts to acquire exclusive lock on lock_file
+          actors: [all_workers]
+        - step: 2
+          action: Lock acquired → Worker becomes Primary
+          actors: [primary_worker]
+          state_change: role = Primary
+        - step: 3
+          action: Lock failed → Worker becomes Secondary
+          actors: [secondary_workers]
+          state_change: role = Secondary
+
+    - phase: 2
+      name: Launch Creation & Distribution
+      steps:
+        - step: 1
+          action: Primary creates Launch via POST /v2/launch
+          actors: [primary_worker]
+        - step: 2
+          action: Primary writes Launch ID to sync_file
+          actors: [primary_worker]
+        - step: 3
+          action: Secondary workers wait for sync_file to appear
+          actors: [secondary_workers]
+          timeout: 60 seconds
+        - step: 4
+          action: Secondary workers read Launch ID from sync_file
+          actors: [secondary_workers]
+        - step: 5
+          action: All workers log coordination events to event_log
+          actors: [all_workers]
+
+    - phase: 3
+      name: Test Execution
+      steps:
+        - step: 1
+          action: Workers execute assigned tests
+          actors: [all_workers]
+        - step: 2
+          action: Workers report results to shared Launch
+          actors: [all_workers]
+        - step: 3
+          action: Workers mark themselves complete
+          actors: [all_workers]
+
+    - phase: 4
+      name: Launch Finalization
+      steps:
+        - step: 1
+          action: Last worker detects all workers complete
+          actors: [last_worker]
+          detection_method: |
+            If RP_PARALLEL_WORKERS set: Check completed_count == RP_PARALLEL_WORKERS
+            Otherwise: Wait 30 seconds for new workers
+        - step: 2
+          action: Last worker finalizes Launch via PUT /v2/launch/{id}/finish
+          actors: [last_worker]
+        - step: 3
+          action: Last worker cleans up coordination files
+          actors: [last_worker]
+          files_removed: [lock_file, sync_file]
+          files_kept: [event_log] # For debugging
+
+# Validation Rules
+validation:
+  lock_file:
+    - rule: Only one process can hold exclusive lock
+      enforcement: Operating system (POSIX flock)
+    - rule: Lock released only after all workers complete
+      enforcement: Primary worker responsibility
+    - rule: File created with 0644 permissions
+      enforcement: open(path, O_WRONLY | O_CREAT, 0644)
+
+  sync_file:
+    - rule: Written exactly once by primary worker
+      enforcement: Primary worker logic
+    - rule: Content matches schema (UUID on line 1)
+      enforcement: Validation on read
+    - rule: File exists before any secondary worker reads
+      enforcement: Timeout-based wait
+
+  event_log:
+    - rule: Append-only (no deletions during session)
+      enforcement: File access mode (append-only flag)
+    - rule: Each line is valid JSON
+      enforcement: Validation on append
+    - rule: Timestamps in ascending order
+      enforcement: Writer responsibility (not enforced)
+
+# Error Scenarios
+error_handling:
+  scenarios:
+    - scenario: Primary worker crashes after obtaining lock
+      detection: Lock file exists but stale (>5 minutes old)
+      resolution: |
+        Future enhancement: Detect stale lock, force release, next worker takes over.
+        Current: Coordination fails, workers create separate launches.
+
+    - scenario: Sync file corrupted or invalid UUID
+      detection: UUID parsing fails
+      resolution: |
+        Log error, retry read (up to 3 times).
+        If all retries fail, create separate launch.
+
+    - scenario: File system permissions deny access
+      detection: EACCES error on file operations
+      resolution: |
+        Log error, fall back to separate launch creation.
+        Log warning to user about coordination failure.
+
+    - scenario: Multiple workers start >30 seconds apart
+      detection: Timeout-based worker count detection
+      resolution: |
+        Late workers join session if sync_file exists.
+        If sync_file doesn't exist, create new session.
+        User can override with RP_PARALLEL_WORKERS env var.
+
+    - scenario: Worker count detection fails
+      detection: RP_PARALLEL_WORKERS not set and timeout expires
+      resolution: |
+        Use actual worker count detected (best-effort).
+        Last worker finalizes based on 30-second no-new-workers timeout.
+
+# Performance Characteristics
+performance:
+  lock_acquisition:
+    operation: flock(fd, LOCK_EX | LOCK_NB)
+    typical_duration: <1ms
+    worst_case: <10ms
+
+  sync_file_write:
+    operation: NSFileCoordinator.coordinate(writingItemAt:)
+    typical_duration: <10ms
+    worst_case: <100ms
+
+  sync_file_read:
+    operation: NSFileCoordinator.coordinate(readingItemAt:)
+    typical_duration: <5ms
+    worst_case: <50ms
+
+  event_log_append:
+    operation: NSFileCoordinator.coordinate(writingItemAt:, .forMerging)
+    typical_duration: <5ms
+    worst_case: <50ms
+
+  total_coordination_overhead:
+    target: <5 seconds
+    measured: TBD (to be measured during testing)
+
+# Testing Contract
+testing:
+  unit_tests:
+    - test: Lock file exclusive access
+      validation: Only one worker acquires lock
+    - test: Sync file read/write
+      validation: Primary writes, secondary reads correct UUID
+    - test: Event log append
+      validation: Multiple workers can append concurrently
+    - test: File cleanup
+      validation: Files removed after finalization
+
+  integration_tests:
+    - test: 2 workers coordination
+      validation: Single Launch created, both workers report results
+    - test: 5 workers coordination
+      validation: Single Launch, all 5 workers report results
+    - test: Workers starting at different times
+      validation: Late joiners use existing Launch ID
+    - test: Primary worker crash simulation
+      validation: Graceful degradation (separate launches)
+    - test: File permission error simulation
+      validation: Fallback to separate launches with warning
+
+# References
+references:
+  posix_flock: https://man7.org/linux/man-pages/man2/flock.2.html
+  nsfilecoordinator: https://developer.apple.com/documentation/foundation/nsfilecoordinator
+  reportportal_java: https://github.com/reportportal/client-java/tree/main/src/main/java/com/epam/reportportal/service/launch/lock
+  json_lines: https://jsonlines.org/

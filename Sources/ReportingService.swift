@@ -142,7 +142,7 @@ public final class ReportingService: Sendable {
     }
 
     /// Finish launch in ReportPortal (v2 async API)
-    /// Used for parallel test execution
+    /// Used for parallel test execution with tolerant finish (multiple workers can call)
     /// - Parameters:
     ///   - launchID: Launch ID from LaunchManager
     ///   - status: Aggregated status from LaunchManager
@@ -152,12 +152,28 @@ public final class ReportingService: Sendable {
             status: status
         )
 
-        let _: LaunchFinish = try await httpClientV2.callEndPoint(endPoint)
+        do {
+            let _: LaunchFinish = try await httpClientV2.callEndPoint(endPoint)
 
-        // Mark as finalized in LaunchManager
-        await launchManager.markFinalized()
+            // Mark as finalized in LaunchManager
+            await launchManager.markFinalized()
 
-        Logger.shared.info("Launch finalized (v2): \(launchID) with status: \(status.rawValue)")
+            Logger.shared.info("Launch finalized (v2): \(launchID) with status: \(status.rawValue)")
+        } catch let error as HTTPClientError {
+            // Handle 404/409 - launch already finished by another worker (expected in parallel mode)
+            if case .httpError(let statusCode, _) = error, statusCode == 404 || statusCode == 409 {
+                Logger.shared.info("Launch already finished by another worker (HTTP \(statusCode)) - no action needed")
+
+                // Mark as finalized in LaunchManager even though we didn't do the finish
+                await launchManager.markFinalized()
+
+                // Don't throw - this is expected and acceptable
+                return
+            }
+
+            // Re-throw other HTTP errors
+            throw error
+        }
     }
 
     // MARK: - Suite Management

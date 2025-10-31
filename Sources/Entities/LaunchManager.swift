@@ -65,6 +65,8 @@ actor LaunchManager {
     func getOrGenerateLaunchUUID() async -> String {
         // Return cached UUID if available
         if let cached = launchUUID {
+            print("📦 [ReportPortal] Using cached UUID: \(cached)")
+            Logger.shared.debug("Using cached launch UUID: \(cached)")
             return cached
         }
 
@@ -72,25 +74,32 @@ actor LaunchManager {
         if let envUUID = ProcessInfo.processInfo.environment["RP_LAUNCH_UUID"],
            !envUUID.isEmpty {
             launchUUID = envUUID
+            print("🌍 [ReportPortal] UUID from environment: \(envUUID)")
+            Logger.shared.info("Using launch UUID from environment variable: \(envUUID)")
             return envUUID
         }
 
         // Priority 2: Auto-generate UUID based on PGID
+        let pid = getpid()
+        let pgid = getpgid(pid)
+        print("⚙️ [ReportPortal] No RP_LAUNCH_UUID env var, auto-generating (PID: \(pid), PGID: \(pgid))")
+        Logger.shared.info("Auto-generating launch UUID (PID: \(pid), PGID: \(pgid))")
+
         let generatedUUID = generateLaunchUUID()
         launchUUID = generatedUUID
+        print("🔧 [ReportPortal] Generated UUID: \(generatedUUID)")
+        Logger.shared.info("Generated launch UUID: \(generatedUUID)")
         return generatedUUID
     }
 
-    /// Generate launch UUID using format: {launchName}_{timestamp}_{PGID}
-    /// - Returns: Generated UUID string
+    /// Generate launch UUID using RFC 4122 UUID format (required by ReportPortal)
+    /// - Returns: Generated UUID string in standard format (e.g., 550e8400-e29b-41d4-a716-446655440000)
     private func generateLaunchUUID() -> String {
-        let timestamp = Int(Date().timeIntervalSince1970)
-        let pgid = getpgid(getpid())
-
-        // Use a generic launch name if not available
-        let launchName = "Launch"
-
-        return "\(launchName)_\(timestamp)_\(pgid)"
+        // Generate a proper RFC 4122 UUID that ReportPortal expects
+        // Note: In auto-generation mode without RP_LAUNCH_UUID environment variable,
+        // each process will generate its own UUID, potentially creating multiple launches.
+        // For guaranteed single launch coordination, always set RP_LAUNCH_UUID in pre-action script.
+        return UUID().uuidString
     }
 
     // MARK: - Bundle Lifecycle

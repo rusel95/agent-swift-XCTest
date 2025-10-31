@@ -91,7 +91,7 @@ public final class ReportingService: Sendable {
             attributes: attributes
         )
 
-        let result: FirstLaunch = try await httpClientV2.callEndPoint(endPoint)
+        let result: LaunchV2Response = try await httpClientV2.callEndPoint(endPoint)
 
         Logger.shared.info("Launch created (v2): \(result.id)")
         return result.id

@@ -85,7 +85,7 @@ public final class ReportingService: Sendable {
         return result.id
     }
 
-    /// Finish launch in ReportPortal
+    /// Finish launch in ReportPortal (v1 API)
     /// - Parameters:
     ///   - launchID: Launch ID from LaunchManager
     ///   - status: Aggregated status from LaunchManager
@@ -97,7 +97,27 @@ public final class ReportingService: Sendable {
         // Mark as finalized in LaunchManager
         await launchManager.markFinalized()
 
-        Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
+        Logger.shared.info("Launch finalized (v1): \(launchID) with status: \(status.rawValue)")
+    }
+
+    /// Finish launch in ReportPortal (v2 async API)
+    /// Used for parallel test execution
+    /// - Parameters:
+    ///   - launchID: Launch ID from LaunchManager
+    ///   - status: Aggregated status from LaunchManager
+    func finalizeLaunchV2(launchID: String, status: TestStatus) async throws {
+        let endPoint = FinishLaunchV2EndPoint(
+            projectName: configuration.projectName,
+            launchID: launchID,
+            status: status
+        )
+
+        let _: LaunchFinish = try await httpClient.callEndPoint(endPoint)
+
+        // Mark as finalized in LaunchManager
+        await launchManager.markFinalized()
+
+        Logger.shared.info("Launch finalized (v2): \(launchID) with status: \(status.rawValue)")
     }
 
     // MARK: - Suite Management

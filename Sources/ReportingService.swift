@@ -43,7 +43,7 @@ public final class ReportingService: Sendable {
 
     // MARK: - Launch Management
 
-    /// Create new launch in ReportPortal
+    /// Create new launch in ReportPortal (v1 API)
     /// - Parameters:
     ///   - name: Launch name (may include test plan name)
     ///   - tags: Tags from configuration
@@ -59,7 +59,29 @@ public final class ReportingService: Sendable {
 
         let result: FirstLaunch = try await httpClient.callEndPoint(endPoint)
 
-        Logger.shared.info("Launch created: \(result.id)")
+        Logger.shared.info("Launch created (v1): \(result.id)")
+        return result.id
+    }
+
+    /// Create new launch in ReportPortal (v2 async API)
+    /// Used for parallel test execution
+    /// - Parameters:
+    ///   - name: Launch name (may include test plan name)
+    ///   - tags: Tags from configuration
+    ///   - attributes: Metadata (device info, OS version, etc.)
+    /// - Returns: Launch ID (UUID string from ReportPortal)
+    func startLaunchV2(name: String, tags: [String], attributes: [[String: String]]) async throws -> String {
+        let endPoint = StartLaunchV2EndPoint(
+            projectName: configuration.projectName,
+            launchName: name,
+            tags: tags,
+            mode: configuration.launchMode,
+            attributes: attributes
+        )
+
+        let result: FirstLaunch = try await httpClient.callEndPoint(endPoint)
+
+        Logger.shared.info("Launch created (v2): \(result.id)")
         return result.id
     }
 

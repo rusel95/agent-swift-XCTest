@@ -21,12 +21,13 @@ struct FinishLaunchV2EndPoint: EndPoint {
     /// Initialize v2 Launch finish endpoint
     ///
     /// - Parameters:
-    ///   - projectName: ReportPortal project name
     ///   - launchID: Launch ID to finish
     ///   - status: Final launch status
-    init(projectName: String, launchID: String, status: TestStatus) {
-        // V2 API path: /v2/{projectName}/launch/{launchId}/finish
-        self.relativePath = "v2/\(projectName)/launch/\(launchID)/finish"
+    ///
+    /// Note: Project name is already in the baseURL from httpClientV2
+    init(launchID: String, status: TestStatus) {
+        // V2 API path: launch/{launchId}/finish (baseURL already has /v2/{projectName})
+        self.relativePath = "launch/\(launchID)/finish"
 
         // V2 API uses camelCase (not snake_case like v1)
         self.parameters = [

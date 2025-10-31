@@ -15,20 +15,21 @@
 |-----------|----------|-----------|-------|--------------|--------|
 | **Sequential** (1 worker) | Simulators | ✅ Works | ✅ Works | No coordination needed | Fully supported |
 | **Sequential** (1 worker) | Real Devices | ✅ Works | ✅ Works | No coordination needed | Fully supported |
-| **Parallel** (2+ workers) | **Simulators** | ✅ Works | ✅ Works | File-based coordination | **Supported** |
-| **Parallel** (2+ workers) | **Real Devices** | ❌ Not supported | ❌ Not supported | No shared file system | **Out of scope** |
+| **Parallel** (2+ workers) | **Simulators** | ✅ Works | ✅ Works | UUID-based (file lock fallback) | **Supported** |
+| **Parallel** (2+ workers) | **Real Devices** | ✅ Works | ✅ Works | UUID-based via env var | **Supported** |
 
 **Why simulator-only for parallel?**
-- Parallel coordination requires shared file system for worker communication
-- iOS Simulators share host Mac's `/tmp` directory (works)
-- Real devices have isolated sandboxes with NO shared storage (doesn't work)
-- Future versions may add network-based coordination for real devices
+- **Primary coordination**: UUID-based via `RP_LAUNCH_UUID` environment variable (works everywhere)
+- **Fallback coordination**: File-based locking via POSIX flock (simulators only)
+- iOS Simulators share host Mac's `/tmp` directory (file lock fallback works)
+- Real devices have isolated sandboxes with NO shared storage (file lock fallback doesn't work)
+- Real devices CAN use UUID-based coordination via environment variable
 
 **What this means for you:**
 - ✅ **Sequential tests work everywhere** - Simulators, real devices, local, CI/CD
-- ✅ **Parallel tests work on simulators** - Multiple simulators coordinate via shared files
-- ❌ **Parallel tests DON'T work on real devices** - Each device creates separate launch (no coordination)
-- 📝 **Workaround for real devices**: Use external scripts to pre-create launch and merge results (see Out of Scope)
+- ✅ **Parallel tests work on simulators** - UUID coordination (preferred) or file lock (fallback)
+- ✅ **Parallel tests work on real devices** - UUID coordination via `RP_LAUNCH_UUID` environment variable
+- 📝 **Setup for parallel on real devices**: Set `RP_LAUNCH_UUID` in Xcode scheme pre-action or CI/CD script
 
 ---
 
@@ -47,22 +48,39 @@
     - Matches actual implementation in LaunchCoordinator.swift (already implemented this way)
   - **Implementation**: Primary worker obtains POSIX flock, creates ONE Launch, writes Launch ID to sync file. Secondary workers poll sync file, read shared Launch ID, report to same Launch. Last worker finalizes Launch.
 
-- Q: Can ReportPortal API query existing IN_PROGRESS launches to avoid file-based coordination? → A: Yes, but with caveats (Hybrid approach recommended)
-  - **API Discovery**: ReportPortal supports filtering launches by status via `GET /v1/{projectKey}/launch?filter.eq.status=IN_PROGRESS&filter.eq.name={launchName}`
-  - **Race Condition Risk**: Two devices querying simultaneously can both see "no launch exists" and create duplicates (no atomic get-or-create)
-  - **Recommended Strategy**: Hybrid approach:
-    1. **Query API first** for existing IN_PROGRESS launch (eliminates coordination when workers start with time delay)
-    2. **Fall back to file lock** if no launch found AND on simulators (prevents race conditions)
-    3. **Accept duplication** if on real devices (simpler than network coordination, can merge later)
+- Q: Can ReportPortal API support custom Launch UUIDs to enable coordination without file locks? → A: Yes! ReportPortal accepts custom UUIDs (UUID-based coordination strategy)
+  - **API Discovery**: ReportPortal API accepts optional `uuid` field in `POST /v2/{projectKey}/launch` request
+    - If `uuid` provided: ReportPortal uses YOUR UUID (enables pre-coordination)
+    - If `uuid` omitted: ReportPortal generates random UUID
+    - Response returns the UUID that was used (yours or generated)
+  - **Source Evidence**: From `reportportal/service-api` GitHub repository:
+    ```java
+    // LaunchBuilder.java:48-76
+    launch.setUuid(Optional.ofNullable(request.getUuid())
+        .orElse(UUID.randomUUID().toString()));
+    
+    // LaunchStartProducer.java:54-76
+    if (!StringUtils.hasText(request.getUuid())) {
+        request.setUuid(UUID.randomUUID().toString());
+    }
+    response.setId(request.getUuid()); // Returns YOUR UUID
+    ```
+  - **Recommended Strategy**: UUID-based coordination with tolerant finish:
+    1. **Pre-create shared UUID** via environment variable `RP_LAUNCH_UUID` (set in Xcode pre-action or CI/CD)
+    2. **All workers use same UUID** when creating launch (first succeeds, others get 409 Conflict)
+    3. **Workers handle 409 gracefully** (launch already exists → use it)
+    4. **All workers report tests** to shared UUID throughout execution
+    5. **Tolerant finish**: All workers call finish, accept 404/409 as success (launch already finished)
   - **Benefits**:
-    - Optimizes common case (workers start 20s apart → 2nd worker finds 1st worker's launch via API)
-    - Eliminates file coordination overhead when API query succeeds
-    - Works cross-platform (real devices can query API even without shared files)
-    - Maintains race condition prevention on simulators via file lock fallback
-  - **Implementation Options**:
-    - **Option 1 (Hybrid)**: Try API query → if found use it, if not found use file lock (simulators) or create new (devices)
-    - **Option 2 (API-only + duplication)**: Try API query → if not found create new, accept multiple launches on real devices
-    - **Option 3 (Current)**: File lock only (simulators work, real devices create separate launches)
+    - **Zero coordination overhead**: No file locks, no polling, no sync files
+    - **Works cross-platform**: Simulators AND real devices (shared UUID via env var)
+    - **Race condition free**: UUID pre-created before workers start
+    - **Multiple finish calls safe**: HTTP 404/409 indicate already finished (not errors)
+    - **Backward compatible**: Falls back to file lock if no UUID provided
+  - **Implementation Priority**:
+    - **Priority 1 (UUID-based)**: Check `RP_LAUNCH_UUID` env var → create launch with custom UUID → tolerant finish
+    - **Priority 2 (File lock fallback)**: If no env var, use file lock coordination (simulators only)
+    - **Priority 3 (Degraded)**: If file lock fails, create separate launch with warning
 
 ---
 
@@ -172,16 +190,18 @@ As a test developer, when coordination fails due to system limitations (network 
 
 ### Edge Cases
 
-- What happens when a worker crashes mid-execution? (Should not prevent Launch finalization)
-- What happens when Xcode is force-quit during test execution? (Launch should auto-close or be cleanable)
-- What happens when **simulator** workers start with significant time delays? (Late workers should still join the same Launch)
-- What happens when running parallel tests on **real devices** instead of simulators? (**NO coordination** - each device creates separate launch, users must use external scripts or sequential mode)
+- What happens when a worker crashes mid-execution? (Other workers continue, call finish with tolerant handling)
+- What happens when Xcode is force-quit during test execution? (Launch remains open, can be manually closed or auto-timeout)
+- What happens when workers start with significant time delays? (All use same UUID, late workers get 409 Conflict and proceed)
+- What happens when running parallel tests on **real devices**? (Works with `RP_LAUNCH_UUID` coordination, no file locks needed)
 - What happens when running sequential tests on **real devices**? (Works perfectly - single device, no coordination needed)
-- What happens when network connectivity to ReportPortal is intermittent? (Coordination should handle API failures gracefully)
-- What happens when two separate test runs start simultaneously? (Each run should have its own isolated Launch)
-- What happens when worker count exceeds expected maximum? (System should handle unbounded worker counts)
-- What happens when parallel mode detection fails? (System should default to sequential mode to avoid coordination overhead)
-- What happens when a single worker is detected but parallel testing is enabled? (Treat as sequential run, no coordination needed)
+- What happens when network connectivity to ReportPortal is intermittent? (Retries with exponential backoff, degrades to separate launches if fails)
+- What happens when two separate test runs start simultaneously? (Each run has unique UUID via timestamp+PGID, separate launches)
+- What happens when worker count exceeds expected maximum? (UUID approach scales to any worker count)
+- What happens when `RP_LAUNCH_UUID` not provided? (System generates UUID or falls back to file lock on simulators)
+- What happens when all workers call finish simultaneously? (First succeeds with 200, others get 404/409 - all acceptable)
+- What happens when 409 Conflict response has no Launch ID? (Use the custom UUID as Launch ID)
+- What happens when finish is called but launch doesn't exist? (404 response treated as success - already finished or never created)
 
 ## Requirements *(mandatory)*
 
@@ -194,29 +214,31 @@ As a test developer, when coordination fails due to system limitations (network 
 - **FR-005**: System MUST aggregate test status across all workers (if any test fails, Launch status is FAILED)
 - **FR-006**: System MUST work from Xcode without requiring external scripts or manual pre-configuration
 - **FR-007**: System MUST handle unknown worker counts determined dynamically by Xcode
-- **FR-008**: System MUST coordinate across multiple independent simulator processes with no shared memory but shared file system access
-- **FR-009**: System MUST work on iOS Simulators (local Mac and CI/CD) for parallel coordination via shared `/tmp` directory
-- **FR-010**: System MUST work on iOS Real Devices in sequential mode (single worker, no coordination needed)
-- **FR-011**: System MUST isolate coordination between different test runs (separate Launches per run)
+- **FR-008**: System MUST coordinate across multiple independent processes with no shared memory, using UUID-based coordination (priority 1) or file-based coordination (priority 2 fallback for simulators)
+- **FR-009**: System MUST work on iOS Simulators (local Mac and CI/CD) using UUID coordination or file lock fallback via shared `/tmp` directory
+- **FR-010**: System MUST work on iOS Real Devices in both sequential mode (single worker) and parallel mode (multiple devices with `RP_LAUNCH_UUID` coordination)
+- **FR-011**: System MUST isolate coordination between different test runs (separate Launch UUIDs per run)
 - **FR-012**: System MUST complete coordination handshake (Launch creation + ID distribution) within 10 seconds
 - **FR-013**: System MUST provide clear logging of coordination events for debugging
-- **FR-014**: System MUST handle workers starting with time delays (late joiners can use shared Launch)
-- **FR-015**: For PARALLEL/SIMULATOR mode: System MUST use file-based coordination with POSIX flock to ensure only ONE Launch is created, with primary worker creating Launch and secondary workers discovering shared Launch ID from sync file
-- **FR-016**: System MUST support manual Launch pre-creation via environment variable `RP_LAUNCH_ID` as escape hatch for CI/CD or advanced users (takes priority over file-based coordination)
+- **FR-014**: System MUST handle workers starting with time delays (late joiners can use shared Launch UUID)
+- **FR-015**: System MUST support UUID-based coordination as priority 1 mechanism via `RP_LAUNCH_UUID` environment variable for cross-platform parallel testing
+- **FR-015a**: System MUST generate unique Launch UUID if `RP_LAUNCH_UUID` not provided (format: `{launchName}_{timestamp}_{PGID}`)
+- **FR-015b**: System MUST use file-based coordination with POSIX flock as priority 2 fallback for simulators when UUID not pre-created
+- **FR-016**: System MUST handle 409 Conflict responses when multiple workers create launch with same UUID (indicates launch already created by another worker)
 - **FR-017**: Workers MUST be able to report test results continuously throughout execution without blocking coordination
-- **FR-018**: System MUST prevent race conditions when multiple simulators attempt to create Launch simultaneously using POSIX flock (LOCK_EX | LOCK_NB)
-- **FR-019**: System MUST prevent premature Launch finalization when fast workers complete before slow workers using bundle reference counting in LaunchManager
-- **FR-020**: System MUST clean up coordination resources after Launch finalization (lock file and sync file)
-- **FR-021**: System MUST detect parallel execution mode and use appropriate API: v2 async API for parallel/simulator runs (launches, logs) for non-blocking operations, v1 sync API for sequential runs for simplicity and backward compatibility
+- **FR-018**: System MUST prevent race conditions when multiple workers attempt to create Launch simultaneously by using custom UUID (first creation succeeds, others get 409 Conflict)
+- **FR-019**: System MUST prevent premature Launch finalization using tolerant finish logic (all workers call finish, first succeeds, others get 404/409 which is acceptable)
+- **FR-020**: System MUST clean up coordination resources after Launch finalization (lock file and sync file for file-based fallback only)
+- **FR-021**: System MUST detect parallel execution mode and use appropriate API: v2 async API for parallel runs (launches, logs) for non-blocking operations, v1 sync API for sequential runs for simplicity and backward compatibility
 - **FR-022**: System MUST detect parallel execution mode by checking for multiple active bundles in same process group (via PGID or RP_SESSION_ID)
-- **FR-023**: For PARALLEL/SIMULATOR runs: Primary worker MUST call `POST /v2/{projectName}/launch` to create ONE shared Launch
-- **FR-024**: For PARALLEL/SIMULATOR runs: Primary worker MUST write Launch ID to sync file `/tmp/reportportal_coordination/launch_{name}_{session}.sync` immediately after creation
-- **FR-025**: For PARALLEL/SIMULATOR runs: Secondary workers MUST poll sync file (100ms intervals, 60s timeout) to discover shared Launch ID
-- **FR-026**: For PARALLEL/SIMULATOR runs: Last worker MUST call `PUT /v2/{projectName}/launch/{launchId}/finish` with aggregated status only after all workers complete
+- **FR-023**: For UUID-based coordination: All workers MUST call `POST /v2/{projectName}/launch` with same custom UUID, handling 409 Conflict as "launch already exists"
+- **FR-024**: For UUID-based coordination: Workers MUST extract Launch ID from successful creation response OR from 409 error response body
+- **FR-025**: For file-based fallback: Primary worker MUST obtain POSIX flock, create launch, write UUID to sync file, secondary workers poll sync file
+- **FR-026**: For parallel runs: All workers MUST call `PUT /v2/{projectName}/launch/{launchId}/finish` with aggregated status, treating 404/409 as success (already finished)
 - **FR-027**: For SEQUENTIAL runs (single worker, any platform): System MAY continue using existing v1 API (`POST /v1/{projectName}/launch`, `PUT /v1/{projectName}/launch/{launchId}/finish`) without coordination overhead
 - **FR-028**: System MUST use v1 force finish API (`PUT /v1/{projectName}/launch/{launchId}/stop`) for cleanup when worker crashes or coordination fails (if needed)
-- **FR-029**: For PARALLEL/SIMULATOR runs: System MUST use session-based file naming with PGID for coordination files to isolate different test runs
-- **FR-030**: For PARALLEL/SIMULATOR runs: LaunchManager MUST track active bundle count to determine when last worker completes
+- **FR-029**: For file-based fallback: System MUST use session-based file naming with PGID for coordination files to isolate different test runs
+- **FR-030**: System MUST track active bundle count in LaunchManager to determine aggregated status across all workers
 - **FR-031**: Launch MUST aggregate status across all workers following severity hierarchy: FAILED > STOPPED > PASSED
 - **FR-032**: For PARALLEL/SIMULATOR runs: System MUST use `POST /v2/{projectName}/log` for batch log creation to ensure non-blocking async log reporting
 - **FR-033**: For PARALLEL/SIMULATOR runs: System MUST use `POST /v2/{projectName}/log/entry` for single log entry creation when immediate log reporting is needed
@@ -255,7 +277,80 @@ As a test developer, when coordination fails due to system limitations (network 
 
 **Note**: This coordination flow applies ONLY to parallel test runs with multiple workers. Sequential runs (single worker) bypass coordination and use existing v1 API for simplicity.
 
-### High-Level Flow Using Shared Launch ID (Parallel Runs Only)
+### High-Level Flow Using UUID-Based Coordination (Parallel Runs)
+
+**Priority 1: UUID-Based Coordination (Preferred)**
+
+**Phase 1: UUID Generation (Before Workers Start)**
+1. Xcode Pre-Action or CI/CD script generates unique UUID:
+   ```bash
+   export RP_LAUNCH_UUID="MyApp_$(date +%Y%m%d_%H%M%S)_$(ps -o pgid= -p $$)"
+   ```
+2. OR: First worker generates UUID if not provided: `{launchName}_{timestamp}_{PGID}`
+3. All workers inherit `RP_LAUNCH_UUID` environment variable
+
+**Phase 2: Launch Creation (All Workers Attempt)**
+1. **All Workers** (simultaneously or with delays):
+   - Read `RP_LAUNCH_UUID` from environment
+   - Call `POST /v2/{projectName}/launch` with `uuid: RP_LAUNCH_UUID`
+   - **First worker**: Gets 200 OK with Launch ID
+   - **Other workers**: Get 409 Conflict (launch already exists)
+   - Both extract Launch ID from response and proceed
+
+2. **Handling 409 Conflict**:
+   ```swift
+   do {
+       let response = try await httpClient.post("/v2/\(project)/launch", body: [
+           "uuid": launchUUID,
+           "name": launchName,
+           "mode": "DEFAULT"
+       ])
+       launchID = response.id
+   } catch let error as HTTPError where error.statusCode == 409 {
+       // Launch already created by another worker - extract ID from error
+       launchID = error.responseBody?.id ?? launchUUID
+       logger.info("Using existing launch created by another worker")
+   }
+   ```
+
+**Phase 3: Test Execution (All Workers in Parallel)**
+- All workers execute their assigned tests
+- All workers report test results to the SAME Launch UUID
+- Test items (suites/tests) created via standard item API
+- Logs reported via `POST /v2/{projectName}/log` (batch) or `POST /v2/{projectName}/log/entry` (single)
+- All v2 async APIs used for non-blocking operation
+
+**Phase 4: Launch Finalization (All Workers Call Finish)**
+1. Each worker completes its tests
+2. Each worker updates aggregated status in LaunchManager
+3. **All Workers** call finish (no coordination needed):
+   ```swift
+   do {
+       try await httpClient.put("/v2/\(project)/launch/\(launchID)/finish", body: [
+           "status": aggregatedStatus
+       ])
+       logger.info("Successfully finished launch")
+   } catch let error as HTTPError where error.statusCode == 404 || error.statusCode == 409 {
+       // Launch already finished by another worker - this is OK
+       logger.info("Launch already finished by another worker")
+   }
+   ```
+4. **First worker to finish**: Gets 200 OK (launch closed)
+5. **Other workers**: Get 404 Not Found or 409 Conflict (already finished) - treated as success
+
+**Result**: Single unified Launch in ReportPortal with all test results from all workers
+
+**Key Benefits**: 
+- Zero coordination overhead (no file locks, no polling)
+- Works on simulators AND real devices
+- Race condition free (UUID pre-created)
+- Multiple finish calls safe (tolerant error handling)
+
+---
+
+**Priority 2: File-Based Fallback (Simulators Only)**
+
+If `RP_LAUNCH_UUID` not provided, fall back to file-based coordination:
 
 **Phase 1: Worker Initialization (Parallel)**
 1. Each worker starts independently (Worker 1, 2, 3, 4, 5)
@@ -265,42 +360,47 @@ As a test developer, when coordination fails due to system limitations (network 
 **Phase 2: Launch Creation (Primary Worker Only)**
 1. **Primary Worker** (first to obtain lock):
    - Obtains exclusive POSIX flock on `/tmp/reportportal_coordination/launch_{name}_{session}.lock`
-   - Calls `POST /v2/{projectName}/launch` to create ONE Launch
+   - Generates Launch UUID: `{launchName}_{timestamp}_{PGID}`
+   - Calls `POST /v2/{projectName}/launch` with custom UUID
    - Receives Launch ID from ReportPortal
-   - Writes Launch ID to sync file: `/tmp/reportportal_coordination/launch_{name}_{session}.sync`
+   - Writes Launch UUID to sync file: `/tmp/reportportal_coordination/launch_{name}_{session}.sync`
    - Releases lock
    - Starts executing tests, reporting to the Launch
 
 2. **Secondary Workers** (failed to obtain lock):
    - Poll sync file `/tmp/reportportal_coordination/launch_{name}_{session}.sync` 
-   - Read shared Launch ID from sync file (typically within 100-500ms)
+   - Read shared Launch UUID from sync file (typically within 100-500ms)
    - Start executing tests, reporting to the SAME Launch
 
-**Phase 3: Test Execution (All Workers in Parallel)**
-- All workers execute their assigned tests
-- All workers report test results to the SAME Launch ID
-- Test items (suites/tests) created via standard item API
-- Logs reported via `POST /v2/{projectName}/log` (batch) or `POST /v2/{projectName}/log/entry` (single)
-- All v2 async APIs used for non-blocking operation
-
-**Phase 4: Launch Finalization (Last Worker Only)**
-1. Each worker completes its tests
-2. Each worker decrements active bundle count in LaunchManager
-3. **Last Worker** (when count reaches zero):
-   - Calls `PUT /v2/{projectName}/launch/{launchId}/finish` with aggregated status
-   - Cleans up coordination files (lock and sync files)
+**Phase 3 & 4**: Same as UUID-based coordination (test execution + tolerant finish)
 
 **Result**: Single unified Launch in ReportPortal with all test results from all workers
-
-**Key Difference from Merge Approach**: This approach uses a single shared Launch from the start. Workers coordinate via file-based locking to ensure only one Launch is created, then all workers report to it. No merge operation is needed.
 
 ### Error Handling Flow
 
 **If Worker Crashes:**
 1. Other workers continue normally
-2. All workers continue reporting to the shared Launch
-3. Last surviving worker finalizes Launch with aggregated status
-4. Coordination files cleaned up after finalization
+2. All workers continue reporting to the shared Launch UUID
+3. All surviving workers call finish (tolerant finish handles multiple calls)
+4. First finish call succeeds, others get 404 (acceptable)
+
+**If Launch Creation Fails (Network Error):**
+1. Worker retries with exponential backoff (1s, 2s, 4s, 8s)
+2. If all retries fail, worker creates separate Launch with generated UUID and logs warning
+3. Tests continue to execute and report (degraded mode)
+
+**If 409 Conflict Error Has No Launch ID:**
+1. Worker uses the custom UUID as Launch ID (UUID == Launch ID in v2 API)
+2. Proceeds to report tests normally
+3. Log informational message about conflict resolution
+
+**If Multiple Finish Calls:**
+1. First worker to finish: Gets 200 OK, launch status set to aggregated status
+2. Other workers: Get 404 Not Found or 409 Conflict
+3. Workers treat 404/409 as success (launch already finished)
+4. No errors logged, coordination succeeds
+
+**File-Based Fallback Errors (Simulators Only):**
 
 **If Lock File Acquisition Fails:**
 1. Worker retries with exponential backoff (1s, 2s, 4s, 8s)
@@ -309,12 +409,12 @@ As a test developer, when coordination fails due to system limitations (network 
 
 **If Sync File Read Fails:**
 1. Secondary worker polls sync file with 100ms intervals
-2. If timeout (60 seconds) expires without Launch ID, worker creates separate Launch
+2. If timeout (60 seconds) expires without Launch UUID, worker creates separate Launch
 3. Tests continue to execute and report (degraded mode)
 4. Log warning about coordination failure
 
 **If Coordination Directory Unavailable:**
-1. Worker falls back to creating individual Launch (no coordination)
+1. Worker falls back to creating individual Launch with generated UUID (no coordination)
 2. Log warning about file system access issue
 3. Tests continue to execute and report (degraded mode)
 
@@ -322,18 +422,18 @@ As a test developer, when coordination fails due to system limitations (network 
 
 ### In Scope
 
-**Parallel Coordination (iOS Simulators ONLY):**
-- ✅ Coordinating Launch creation across multiple parallel **simulator** workers via file-based locking
-- ✅ Distributing shared Launch ID to all **simulator** workers via sync file
-- ✅ Tracking **simulator** worker completion status via LaunchManager bundle counting
-- ✅ Coordinating Launch finalization after all **simulator** workers complete
-- ✅ Zero-configuration Xcode integration for **simulators**
-- ✅ iOS Simulator support (local Mac and CI/CD on single VM)
-- ✅ Coordination for 1-20 **simulator** workers
-- ✅ Handling **simulator** workers with variable test counts and finish times
-- ✅ Graceful handling of **simulator** worker crashes
-- ✅ File-based coordination using host's `/tmp` directory (**simulators** share this)
-- ✅ POSIX flock for exclusive lock acquisition (primary/secondary worker roles)
+**Parallel Coordination (All Platforms with UUID):**
+- ✅ UUID-based coordination via `RP_LAUNCH_UUID` environment variable (works everywhere)
+- ✅ Coordinating Launch creation across multiple parallel workers via shared UUID
+- ✅ Zero-configuration coordination when UUID pre-created in Xcode pre-action
+- ✅ Tolerant finish handling (all workers call finish, accept 404/409 as success)
+- ✅ iOS Simulator support (local Mac and CI/CD)
+- ✅ iOS Real Device support (local Mac and CI/CD with UUID coordination)
+- ✅ Coordination for 1-20 workers (simulators or real devices)
+- ✅ Handling workers with variable test counts and finish times
+- ✅ Graceful handling of worker crashes
+- ✅ File-based fallback coordination using host's `/tmp` directory (simulators only)
+- ✅ POSIX flock for exclusive lock acquisition in fallback mode (simulators)
 
 **Sequential Mode (All Platforms):**
 - ✅ Single worker execution on iOS Simulators (no coordination needed)
@@ -344,33 +444,25 @@ As a test developer, when coordination fails due to system limitations (network 
 **General:**
 - ✅ Clear logging and debugging support
 - ✅ API version detection (v1 for sequential, v2 for parallel)
-- ✅ Environment variable support (`RP_LAUNCH_ID`, `RP_PARALLEL_WORKERS`)
+- ✅ Environment variable support (`RP_LAUNCH_UUID` for coordination)
+- ✅ Xcode pre-action script templates for UUID generation
+- ✅ Cross-platform parallel testing (simulators + real devices)
 
 ### Out of Scope
 
-**Real Device Parallel Coordination (Future Phase):**
-- ❌ Coordinating Launch creation across multiple parallel **real devices**
-- ❌ File-based coordination for **real devices** (no shared file system)
-- ❌ Real device testing in parallel mode (each device creates separate launch)
-- ❌ CI/CD device farms (AWS Device Farm, BrowserStack, Firebase Test Lab) in parallel mode
-- ❌ Network-based coordination server (future v2 feature)
-- ❌ Mixed simulator + real device parallel runs
-
-**Workaround for Real Devices (Documented):**
-Users needing parallel coordination on real devices must use external scripts to:
-1. Pre-create launch via API before tests
-2. Set `RP_LAUNCH_ID` environment variable
-3. Post-merge launches via API after tests (if multiple devices)
-Example scripts will be provided in documentation.
+**Advanced Coordination Features (Future Phases):**
+- ❌ Network-based coordination server (not needed with UUID approach)
+- ❌ Mixed simulator + real device parallel runs in single session
+- ❌ Launch pre-creation via API (replaced by UUID-based coordination)
+- ❌ Merge API usage (not needed with shared UUID approach)
 
 **Other Out of Scope:**
-- Coordination across multiple machines/hosts (single-machine only)
+- Coordination across multiple machines/hosts (UUID approach supports this if UUID shared via external means)
 - Backward compatibility with existing broken NSFileCoordinator-based code (will replace)
 - Suite-level coordination (feature focuses on Launch-level)
 - Automatic retry of failed tests
 - Test result filtering or transformation
 - ReportPortal server configuration or setup
-- CI/CD-specific optimizations beyond parallel coordination
 
 ## Dependencies & Assumptions *(mandatory)*
 
@@ -383,13 +475,14 @@ Example scripts will be provided in documentation.
 
 ### Assumptions
 
-**For Parallel/Simulator Coordination:**
-- **Simulator workers** are spawned by the same `xcodebuild` command on same host machine (share process group PGID)
-- **Simulator workers** start within reasonable time window (< 30 seconds between first and last)
-- **Simulator workers** share host Mac's `/tmp` directory via `NSTemporaryDirectory()` (current iOS Simulator behavior)
-- **Simulator workers** can read/write files to `/tmp/reportportal_launches_{PGID}.txt` without sandboxing restrictions
-- **Simulator workers** fail independently (one worker crash doesn't crash others)
-- File system on host Mac supports POSIX file locking (`flock`) for coordination
+**For Parallel Coordination:**
+- Workers use shared UUID from `RP_LAUNCH_UUID` environment variable
+- Workers start within reasonable time window (< 5 minutes between first and last)
+- First worker to create launch succeeds, others get 409 Conflict (acceptable)
+- All workers can call finish, first succeeds, others get 404 (acceptable)
+- **Simulator workers** share host Mac's `/tmp` directory for file-based fallback
+- **Real device workers** use UUID coordination (no file access needed)
+- Workers fail independently (one worker crash doesn't crash others)
 - ReportPortal v2 async API is available for launches and logs
 - v2 async APIs provide sufficient performance for non-blocking parallel test reporting
 
@@ -445,24 +538,39 @@ Example scripts will be provided in documentation.
 
 ## Open Questions *(optional)*
 
-1. **Timeout Values**: What specific timeout values should be used for:
-   - Sync file read timeout (default: 60 seconds for secondary workers)
-   - Launch ID polling interval (default: 100ms)
-   - Lock acquisition timeout (default: immediate LOCK_NB non-blocking)
-   - Retry delays for coordination failures (default: exponential backoff 1s, 2s, 4s, 8s)
+1. **UUID Generation Strategy**: How should Launch UUID be generated when not provided via `RP_LAUNCH_UUID`?
+   - Option A: `{launchName}_{timestamp}_{PGID}` (unique per process group)
+   - Option B: `{launchName}_{timestamp}_{randomUUID}` (globally unique)
+   - Option C: Pure UUID v4 (most unique but less human-readable)
+   - **Recommendation**: Option A for simulators (PGID groups workers), Option B for real devices
 
-2. **Coordination State Cleanup**: Should coordination files be cleaned up immediately after Launch finalization or persist for debugging?
+2. **Coordination State Cleanup**: Should coordination files be cleaned up immediately after Launch finalization?
+   - Only applies to file-based fallback mode (simulators without UUID)
    - Option A: Immediate cleanup (cleaner, but harder to debug)
    - Option B: Time-based cleanup (keep for 1 hour, then auto-delete)
    - Option C: Manual cleanup command for developers
+   - **Recommendation**: Option B (debugging-friendly)
 
-3. **Partial Failure Handling**: When a worker crashes mid-execution, should the system:
-   - Wait for all bundles to complete then finalize normally (may delay results if worker is stuck)
-   - Detect crash via timeout and finalize with remaining workers (faster but may miss slow workers)
-   - Use force finish API on remaining tests
+3. **Finish Aggregation Logic**: When multiple workers call finish with different statuses, which status wins?
+   - All workers calculate aggregated status before calling finish
+   - First worker to finish sets final status
+   - Question: Should we enforce status consistency checking?
+   - **Recommendation**: Trust first worker's aggregated status (LaunchManager tracks all bundle statuses)
 
 4. **Launch Naming Strategy**: How should Launch be named in parallel mode?
-   - Include worker count: "Test Run [5 Workers]"
-   - Include device info: "Test Run [iPhone 15 Pro Simulators]"
-   - Include PGID: "Test Run [PGID:12345]"
-   - Keep simple: Just use base launch name
+   - Option A: Include worker count: "Test Run [5 Workers]" (requires knowing total count)
+   - Option B: Include device info: "Test Run [iPhone 15 Pro Simulators]"
+   - Option C: Keep simple: Just use base launch name (recommended for UUID approach)
+   - **Recommendation**: Option C (simpler, UUID already provides uniqueness)
+
+5. **Fallback Priority**: When should system use file-based fallback vs failing fast?
+   - UUID not provided → Generate UUID (no fallback needed)
+   - UUID provided but launch creation fails → Retry then fail
+   - File lock fails (simulators) → Retry then create separate launch with warning
+   - **Recommendation**: Always try to create launch, accept degraded mode with separate launches
+
+6. **Real Device UUID Distribution**: How should UUID be distributed to real devices in parallel?
+   - Option A: Xcode pre-action sets `RP_LAUNCH_UUID` (works for local testing)
+   - Option B: CI/CD script sets environment variable (works for CI)
+   - Option C: External coordination service (complex, out of scope)
+   - **Recommendation**: Options A+B (documentation + examples provided)

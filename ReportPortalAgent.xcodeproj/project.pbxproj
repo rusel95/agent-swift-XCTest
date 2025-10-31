@@ -62,6 +62,7 @@
 		92FEE094212EEE2D00ADB1ED /* FinishItemEndPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FEE093212EEE2D00ADB1ED /* FinishItemEndPoint.swift */; };
 		92FEE096212EF30700ADB1ED /* StartItemEndPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FEE095212EF30700ADB1ED /* StartItemEndPoint.swift */; };
 		FE6653CD2899F4316DA698AB /* ReportingServiceError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0875240659673E68475617D3 /* ReportingServiceError.swift */; };
+		82C12628EAC440B48B84154C /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 14CDAECFB40F435B86200E2A /* Sentry */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -169,6 +170,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				82C12628EAC440B48B84154C /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -176,6 +178,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				82C12628EAC440B48B84154C /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -184,6 +187,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9203A3BE2136E2CA00BFAF82 /* ReportPortalAgent.framework in Frameworks */,
+				82C12628EAC440B48B84154C /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -192,6 +196,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9203A3C12136E2D800BFAF82 /* ReportPortalAgent.framework in Frameworks */,
+				82C12628EAC440B48B84154C /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -380,6 +385,7 @@
 				9203A3882135C20C00BFAF82 /* Sources */,
 				9203A3892135C20C00BFAF82 /* Frameworks */,
 				9203A38A2135C20C00BFAF82 /* Resources */,
+				0EEF2D03C4B940A19DB6C99B /* Upload Debug Symbols to Sentry */,
 			);
 			buildRules = (
 			);
@@ -389,6 +395,9 @@
 			productName = Example;
 			productReference = 9203A38C2135C20C00BFAF82 /* Example.app */;
 			productType = "com.apple.product-type.application";
+			packageProductDependencies = (
+				14CDAECFB40F435B86200E2A /* Sentry */,
+			);
 		};
 		9203A39E2135C20E00BFAF82 /* ExampleUnitTests */ = {
 			isa = PBXNativeTarget;
@@ -434,13 +443,13 @@
 		3687519C1F5866CA0021B74D /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				LastSwiftUpdateCheck = 0940;
-				LastUpgradeCheck = 0940;
+				LastSwiftUpdateCheck = 940;
+				LastUpgradeCheck = 940;
 				ORGANIZATIONNAME = "Sergey Komarov";
 				TargetAttributes = {
 					368751A41F5866CA0021B74D = {
 						CreatedOnToolsVersion = 8.3.3;
-						LastSwiftMigration = 0910;
+						LastSwiftMigration = 910;
 						ProvisioningStyle = Automatic;
 					};
 					9203A38B2135C20C00BFAF82 = {
@@ -480,6 +489,9 @@
 				9203A38B2135C20C00BFAF82 /* Example */,
 				9203A39E2135C20E00BFAF82 /* ExampleUnitTests */,
 				9203A3A92135C20E00BFAF82 /* ExampleUITests */,
+			);
+			packageReferences = (
+				E160777C42B84D20A770258A /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 			);
 		};
 /* End PBXProject section */
@@ -836,6 +848,8 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 5.5;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_USER_SCRIPT_SANDBOXING = "NO";
 			};
 			name = Debug;
 		};
@@ -860,6 +874,8 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 5.5;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_USER_SCRIPT_SANDBOXING = "NO";
 			};
 			name = Release;
 		};
@@ -1006,6 +1022,54 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		0EEF2D03C4B940A19DB6C99B /* Upload Debug Symbols to Sentry */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}",
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# This script is responsible for uploading debug symbols and source context for Sentry.
+if which sentry-cli >/dev/null; then
+  export SENTRY_ORG=ruslanpopesku
+  export SENTRY_PROJECT=report-portal
+  ERROR=$(sentry-cli debug-files upload --include-sources \"$DWARF_DSYM_FOLDER_PATH\" 2>&1 >/dev/null)
+  if [ ! $? -eq 0 ]; then
+    echo \"warning: sentry-cli - $ERROR\"
+  fi
+else
+  echo \"warning: sentry-cli not installed, download from https://github.com/getsentry/sentry-cli/releases\"
+fi
+";
+			name = "Upload Debug Symbols to Sentry";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		E160777C42B84D20A770258A /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa/";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		14CDAECFB40F435B86200E2A /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E160777C42B84D20A770258A /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 3687519C1F5866CA0021B74D /* Project object */;
 }

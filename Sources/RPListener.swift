@@ -880,9 +880,7 @@ open class RPListener: NSObject, XCTestObservation {
                         Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
 
                         // Clean up coordination file after successful finalization
-                        if let launchName = self.enhancedLaunchName {
-                            await self.launchCoordinator.cleanupCoordinationFile(for: launchName)
-                        }
+                        // No cleanup needed for UUID-based coordination (no coordination files)
                     }
                 } catch {
                     Logger.shared.error("Failed to finalize launch: \(error.localizedDescription)")

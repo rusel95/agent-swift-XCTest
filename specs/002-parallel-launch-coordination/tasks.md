@@ -85,14 +85,14 @@
 
 **Goal**: Prevent duplicate suites in ReportPortal hierarchy (scales to 100+ suites)
 
-- [ ] T010 Create FileCoordination utility in Sources/Utilities/FileCoordination.swift
+- [X] T010 Create FileCoordination utility in Sources/Utilities/FileCoordination.swift
   - Implement `acquireLock(path: String) throws -> FileHandle`
   - Implement `releaseLock(handle: FileHandle)`
   - Use POSIX flock for exclusive locks
   - Create parent directories automatically (/tmp/reportportal/)
   - Handle EWOULDBLOCK with retry logic (max 10s timeout)
 
-- [ ] T011 Create SuiteCoordinator actor in Sources/Entities/SuiteCoordinator.swift
+- [X] T011 Create SuiteCoordinator actor in Sources/Entities/SuiteCoordinator.swift
   - Actor-isolated suite ID registry: `[String: String]` (suite name → suite ID)
   - Method: `getOrCreateSuite(name: String, launchID: String) async throws -> String`
   - Lock file path: `/tmp/reportportal/suite_{name}_{launchID}.lock`
@@ -100,14 +100,14 @@
   - Logic: Acquire lock → Check sync file → Create suite if needed → Write ID → Release lock
   - Include correlation ID logging
 
-- [ ] T012 Update ReportingService.startSuite for coordination in Sources/ReportingService.swift
+- [X] T012 Update ReportingService.startSuite for coordination in Sources/ReportingService.swift
   - Accept `coordinator: SuiteCoordinator?` parameter
   - If coordinator exists AND platform is simulator: Use file-based coordination
   - If coordinator nil OR platform is real device: Direct API call (no coordination)
   - Return suite ID from coordinator or direct API response
   - Log coordination path taken
 
-- [ ] T013 Update RPListener.testSuiteWillStart for suite coordination in Sources/RPListener.swift
+- [X] T013 Update RPListener.testSuiteWillStart for suite coordination in Sources/RPListener.swift
   - Create SuiteCoordinator instance (shared across RPListener lifetime)
   - Pass coordinator to ReportingService.startSuite
   - Handle coordination errors gracefully (log + fallback to direct API)
@@ -126,13 +126,13 @@
   - Verify: All test results appear under correct suite
   - Check: Sync files created in /tmp/reportportal/
 
-- [ ] T016 Add platform detection to SuiteCoordinator in Sources/Entities/SuiteCoordinator.swift
+- [X] T016 Add platform detection to SuiteCoordinator in Sources/Entities/SuiteCoordinator.swift
   - Property: `isPlatformSupported: Bool`
   - Logic: Check if running on simulator vs real device
   - Return false for real devices (no shared /tmp)
   - Log: "Suite coordination disabled for real devices"
 
-- [ ] T017 Add cleanup logic for suite sync files in Sources/Entities/SuiteCoordinator.swift
+- [X] T017 Add cleanup logic for suite sync files in Sources/Entities/SuiteCoordinator.swift
   - Method: `cleanupSyncFiles(launchID: String) async`
   - Remove all `/tmp/reportportal/suite_*_{launchID}.*` files
   - Call from RPListener.testBundleDidFinish
@@ -150,7 +150,7 @@
 
 **Goal**: Single finish API call with correct aggregated status
 
-- [ ] T018 Create WorkerTracker utility in Sources/Entities/WorkerTracker.swift
+- [X] T018 Create WorkerTracker utility in Sources/Entities/WorkerTracker.swift
   - File path: `/tmp/reportportal/launch_{uuid}_workers.txt`
   - Method: `registerWorker(uuid: String, workerID: String) async throws`
   - Method: `unregisterWorker(uuid: String, workerID: String) async throws -> Bool` (returns true if last worker)
@@ -158,7 +158,7 @@
   - Use FileCoordination for exclusive access
   - Include atomic read-modify-write operations
 
-- [ ] T019 Create FinishCoordinator actor in Sources/Entities/FinishCoordinator.swift
+- [X] T019 Create FinishCoordinator actor in Sources/Entities/FinishCoordinator.swift
   - Actor-isolated status aggregator: `[String: TestStatus]` (worker ID → status)
   - Lock file path: `/tmp/reportportal/launch_{uuid}_finish.lock`
   - Status file path: `/tmp/reportportal/launch_{uuid}_statuses.txt`
@@ -166,6 +166,15 @@
   - Method: `shouldFinishLaunch(uuid: String, workerID: String) async throws -> (Bool, TestStatus?)`
   - Logic: Record status → Check if last worker → Aggregate statuses → Return decision
   - Aggregation: FAILED > SKIPPED > PASSED (worst status wins)
+
+- [X] T020 Update ReportingService.finalizeLaunchV2 for finish coordination in Sources/ReportingService.swift
+  - Accept `coordinator: FinishCoordinator?`, `tracker: WorkerTracker?`, `uuid: String?`, `workerID: String?` parameters
+  - Remove tolerant 404/409 handling (file-based = single finish)
+  - If coordinator exists: Use file-based coordination
+  - If coordinator nil: Direct API call (backward compat)
+  - Only call API if coordinator.shouldFinishLaunch returns true
+  - Use aggregated status from coordinator
+  - Cleanup coordination files after successful finish
 
 - [ ] T020 Update ReportingService.finishLaunch for coordination in Sources/ReportingService.swift
   - Accept `coordinator: FinishCoordinator?` and `tracker: WorkerTracker?` parameters

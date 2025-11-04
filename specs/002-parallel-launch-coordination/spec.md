@@ -96,7 +96,7 @@
     - **Test level (1000+ per run)**: No coordination needed. XCTest distributes tests uniquely across workers, no collisions
   - **Implementation**: Hybrid coordination strategy:
     1. **Launch Coordination**: Use UUID-based approach (existing implementation) - `RP_LAUNCH_UUID` env var or auto-generate, all workers attempt creation, 409 Conflict = success
-    2. **Suite Coordination**: Use file-based approach (NEW) - First worker creates suite, writes suite ID to `/tmp/reportportal/suite_{name}_{sessionID}.sync`, other workers read from file
+    2. **Suite Coordination**: Use file-based approach (NEW) - First worker creates suite, writes suite ID to `/tmp/reportportal/suite_{name}_{launchID}.sync`, other workers read from file
     3. **Launch Finish Coordination**: Use file-based approach (NEW) - Last worker detection via worker count tracking, only last worker calls finish API
     4. **Test Coordination**: None needed - Tests are unique per worker, no duplicate creation
   - **Benefits of Hybrid Approach**:
@@ -195,12 +195,14 @@ As a worker process, when the primary worker creates a Launch, I want to discove
 
 **Independent Test**: Can be tested by measuring time from Launch creation to when all workers have the Launch ID, verifying it completes within acceptable timeout (e.g., 5 seconds).
 
+**Note**: With UUID-based coordination via `RP_LAUNCH_UUID` environment variable, Launch ID distribution is **instant** (all workers read from environment, no delay). This user story is implicitly satisfied by the UUID approach - no explicit implementation or testing needed beyond verifying environment variable access.
+
 **Acceptance Scenarios**:
 
-1. **Given** primary worker creates a Launch, **When** secondary workers need the Launch ID, **Then** they retrieve it within 5 seconds
-2. **Given** a Launch ID is available, **When** a secondary worker starts, **Then** it discovers the Launch ID before executing its first test
-3. **Given** multiple workers requesting Launch ID simultaneously, **When** all workers attempt to read, **Then** all workers successfully receive the correct Launch ID
-4. **Given** Launch ID distribution fails, **When** timeout expires, **Then** worker either retries or fails gracefully with clear error message
+1. **Given** UUID set in `RP_LAUNCH_UUID`, **When** workers start, **Then** all workers read the same UUID instantly from environment
+2. **Given** no `RP_LAUNCH_UUID` set, **When** first worker generates UUID, **Then** UUID is available immediately (no distribution delay)
+3. **Given** multiple workers starting simultaneously, **When** all workers read `RP_LAUNCH_UUID`, **Then** all workers receive identical UUID
+4. **Given** environment variable access fails, **When** worker cannot read UUID, **Then** worker auto-generates fallback UUID with warning
 
 ---
 
@@ -252,7 +254,7 @@ As a test developer, when coordination fails due to system limitations (network 
 - What happens when a suite sync file is corrupted? (Worker retries, falls back to creating duplicate suite with warning)
 - What happens when worker tracking file is corrupted? (Multiple workers may call finish, first succeeds, file lock prevents race condition)
 - What happens when last worker crashes before calling finish? (Launch remains open, requires manual cleanup or timeout)
-- What happens when multiple test suites have the same name? (Session ID in filename prevents collision across test runs)
+- What happens when multiple test suites have the same name? (Launch ID in filename prevents collision across test runs)
 - What happens when `/tmp` directory is not writable? (Coordination fails, workers create separate launches/suites with error logging)
 
 ## Requirements *(mandatory)*
@@ -286,13 +288,13 @@ As a test developer, when coordination fails due to system limitations (network 
 - **FR-023**: For launch creation: All workers MUST call `POST /v2/{projectName}/launch` with same custom UUID, handling 409 Conflict as "launch already exists"
 - **FR-024**: For launch creation: Workers MUST extract Launch ID from successful creation response OR from 409 error response body
 - **FR-025**: For suite coordination: System MUST use file-based sync files (one per suite) to prevent duplicate suite creation across workers
-- **FR-026**: For suite coordination: First worker creating a suite MUST write suite ID to `/tmp/reportportal/suite_{name}_{sessionID}.sync`, other workers read from file
+- **FR-026**: For suite coordination: First worker creating a suite MUST write suite ID to `/tmp/reportportal/suite_{name}_{launchID}.sync`, other workers read from file
 - **FR-027**: For suite coordination: Workers MUST poll suite sync file with 100ms intervals and 5-second timeout if suite not yet created
 - **FR-028**: For launch finish: Workers MUST register themselves in `/tmp/reportportal/launch_{uuid}_workers.txt` on start
 - **FR-029**: For launch finish: Workers MUST remove themselves from worker tracking file on completion
-- **FR-030**: For launch finish: Last worker (worker count = 0 after self-removal) MUST obtain exclusive lock and call finish API
-- **FR-031**: For launch finish: Last worker MUST aggregate status from LaunchManager before calling finish (FAILED > STOPPED > PASSED hierarchy)
-- **FR-032**: For launch finish: Non-last workers MUST skip finish API call entirely (no 404/409 tolerant approach needed)
+- **FR-030**: For launch finish: Last worker (worker count = 0 after self-removal) MUST obtain exclusive lock and call finish API exactly once
+- **FR-031**: For launch finish: Last worker MUST aggregate status from all workers before calling finish (FAILED > STOPPED > PASSED hierarchy)
+- **FR-032**: For launch finish: Non-last workers MUST skip finish API call entirely (file-based coordination ensures single finish call)
 - **FR-033**: System MUST use session-based file naming with PGID or launch UUID for coordination files to isolate different test runs
 - **FR-034**: For SEQUENTIAL runs (single worker, any platform): System MAY continue using existing v1 API (`POST /v1/{projectName}/launch`, `PUT /v1/{projectName}/launch/{launchId}/finish`) without coordination overhead
 - **FR-035**: System MUST use v1 force finish API (`PUT /v1/{projectName}/launch/{launchId}/stop`) for cleanup when worker crashes or coordination fails (if needed)
@@ -368,7 +370,7 @@ For each test suite (e.g., `LoginTests`, `CheckoutTests`):
 
 1. **Check for existing suite** (File-based lookup):
    ```swift
-   let suiteFile = "/tmp/reportportal/suite_\(suiteName)_\(sessionID).sync"
+   let suiteFile = "/tmp/reportportal/suite_\(suiteName)_\(launchID).sync"
    if let existingSuiteID = readSuiteID(from: suiteFile) {
        return existingSuiteID // Suite already created by another worker
    }
@@ -526,7 +528,6 @@ For each test suite (e.g., `LoginTests`, `CheckoutTests`):
 **Other Out of Scope:**
 - Coordination across multiple machines/hosts (UUID approach supports this if UUID shared via external means)
 - Backward compatibility with existing broken NSFileCoordinator-based code (will replace)
-- Suite-level coordination (feature focuses on Launch-level)
 - Automatic retry of failed tests
 - Test result filtering or transformation
 - ReportPortal server configuration or setup

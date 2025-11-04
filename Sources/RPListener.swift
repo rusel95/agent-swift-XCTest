@@ -909,20 +909,30 @@ open class RPListener: NSObject, XCTestObservation {
             Logger.shared.info("Bundle count decremented. Active bundles: \(activeCount), Should finalize: \(shouldFinalize), Already finalized: \(isFinalized)")
 
             if shouldFinalize && !isFinalized {
-                // This is the last bundle - finalize launch (tolerant to 404/409)
+                // This is the last bundle - finalize launch
                 guard let launchID = await launchManager.getLaunchID() else {
                     Logger.shared.error("Cannot finalize launch: launch ID not found")
                     return
                 }
 
                 let status = await launchManager.getAggregatedStatus()
-                Logger.shared.info("Last bundle finished. Finalizing launch \(launchID) with aggregated status: \(status.rawValue)")
+                Logger.shared.info("Last bundle finished. Finalizing launch \(launchID) with status: \(status.rawValue)")
 
                 do {
                     if let asyncService = reportingService {
-                        // Use finalizeLaunchV2 with tolerant 404/409 handling
-                        // First worker to finish succeeds, others get 404 (acceptable)
-                        try await asyncService.finalizeLaunchV2(launchID: launchID, status: status)
+                        // Get launch UUID and worker ID for coordination
+                        let launchUUID = await launchManager.getLaunchUUID()
+                        
+                        // Use finalizeLaunchV2 with file-based finish coordination
+                        // Only last worker will make the API call
+                        try await asyncService.finalizeLaunchV2(
+                            launchID: launchID,
+                            status: status,
+                            coordinator: finishCoordinator,
+                            tracker: workerTracker,
+                            uuid: launchUUID,
+                            workerID: workerID
+                        )
                     }
                 } catch {
                     Logger.shared.error("Failed to finalize launch: \(error.localizedDescription)")

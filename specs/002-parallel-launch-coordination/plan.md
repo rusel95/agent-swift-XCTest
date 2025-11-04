@@ -68,6 +68,7 @@ specs/002-parallel-launch-coordination/
 ### Source Code (repository root)
 
 ```text
+```text
 Sources/
 ├── RPListener.swift                # [MODIFY] Update for hybrid coordination
 ├── ReportingService.swift          # [MODIFY] Add UUID support, keep tolerant 409 handling
@@ -90,9 +91,11 @@ Sources/
 │   └── [other entities]               # [KEEP] Existing
 └── Utilities/
     ├── FileCoordination.swift         # [ADD] POSIX file operations (open, flock, read/write)
+    ├── PlatformDetector.swift         # [ADD] Platform detection (simulator vs real device)
     └── [all utilities]                # [KEEP] Existing
 
 Tests/
+```
 ├── ExampleUnitTests/
 │   ├── LaunchManagerTests.swift       # [EXISTS] UUID generation tests
 │   ├── CoordinationTests.swift        # [EXISTS] 409/404 handling tests

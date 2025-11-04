@@ -239,12 +239,15 @@
   - ✅ All errors logged with [ERROR] prefix for Sentry filtering
   - ✅ Correlation IDs included in all error logs
 
-- [ ] T029 [P] Create end-to-end integration test in ExampleUnitTests/EndToEndCoordinationTests.swift
-  - Test: Full test run with 5 workers
-  - Verify: 1 launch, N suites (one per test class), 1 finish
-  - Verify: All test results present
-  - Verify: Correct launch status (aggregated)
-  - Check: All sync files cleaned up
+- [X] T029 [P] Create end-to-end integration test in ExampleUnitTests/EndToEndCoordinationTests.swift
+  - ✅ COMPLETED: Comprehensive test suite created
+  - ✅ Test: Single worker flow (register → create suite → finish)
+  - ✅ Test: 5 parallel workers with suite deduplication
+  - ✅ Test: Status aggregation with all priority combinations
+  - ✅ Test: File creation and cleanup verification
+  - ✅ Validates: 1 suite per test class (deduplication works)
+  - ✅ Validates: Correct status aggregation (FAILED > STOPPED > SKIPPED > PASSED)
+  - ✅ Validates: Last worker detection and single finish trigger
 
 - [X] T030 Create Logger utility in Sources/Utilities/Logger.swift
   - ✅ COMPLETED: Logger already exists with Sentry integration

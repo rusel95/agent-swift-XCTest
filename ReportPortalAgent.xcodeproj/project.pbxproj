@@ -24,6 +24,8 @@
 		8539CC322EBA58F200F1C1BA /* SuiteCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8539CC312EBA58F200F1C1BA /* SuiteCoordinator.swift */; };
 		8539CC342EBA58F900F1C1BA /* WorkerTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8539CC332EBA58F900F1C1BA /* WorkerTracker.swift */; };
 		8539CC362EBA591300F1C1BA /* FileCoordination.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8539CC352EBA591300F1C1BA /* FileCoordination.swift */; };
+		8539CC382EBA5BD500F1C1BA /* CoordinationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8539CC372EBA5BD500F1C1BA /* CoordinationTests.swift */; };
+		8539CC3A2EBA5BDD00F1C1BA /* EndToEndCoordinationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8539CC392EBA5BDD00F1C1BA /* EndToEndCoordinationTests.swift */; };
 		85529CD22EA9094F0080536D /* OperationTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CD12EA9094F0080536D /* OperationTracker.swift */; };
 		85529CE22EA90A060080536D /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CE12EA90A060080536D /* Logger.swift */; };
 		85529CE32EA90BD20080536D /* SuiteOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CD32EA9095F0080536D /* SuiteOperation.swift */; };
@@ -123,6 +125,8 @@
 		8539CC312EBA58F200F1C1BA /* SuiteCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuiteCoordinator.swift; sourceTree = "<group>"; };
 		8539CC332EBA58F900F1C1BA /* WorkerTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkerTracker.swift; sourceTree = "<group>"; };
 		8539CC352EBA591300F1C1BA /* FileCoordination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCoordination.swift; sourceTree = "<group>"; };
+		8539CC372EBA5BD500F1C1BA /* CoordinationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinationTests.swift; sourceTree = "<group>"; };
+		8539CC392EBA5BDD00F1C1BA /* EndToEndCoordinationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndToEndCoordinationTests.swift; sourceTree = "<group>"; };
 		85529CCF2EA9092D0080536D /* LaunchManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchManager.swift; sourceTree = "<group>"; };
 		85529CD12EA9094F0080536D /* OperationTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperationTracker.swift; sourceTree = "<group>"; };
 		85529CD32EA9095F0080536D /* SuiteOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuiteOperation.swift; sourceTree = "<group>"; };
@@ -285,6 +289,8 @@
 		9203A3A22135C20E00BFAF82 /* ExampleUnitTests */ = {
 			isa = PBXGroup;
 			children = (
+				8539CC372EBA5BD500F1C1BA /* CoordinationTests.swift */,
+				8539CC392EBA5BDD00F1C1BA /* EndToEndCoordinationTests.swift */,
 				9203A3A32135C20E00BFAF82 /* SummatorTests.swift */,
 				851D90F72EB14A3B0026437F /* LaunchManagerTests.swift */,
 				851D90F82EB14A3B0026437F /* OperationTrackerTests.swift */,
@@ -627,8 +633,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8539CC3A2EBA5BDD00F1C1BA /* EndToEndCoordinationTests.swift in Sources */,
 				851D90F92EB14A3B0026437F /* LaunchManagerTests.swift in Sources */,
 				851D90FA2EB14A3B0026437F /* OperationTrackerTests.swift in Sources */,
+				8539CC382EBA5BD500F1C1BA /* CoordinationTests.swift in Sources */,
 				9203A3A42135C20E00BFAF82 /* SummatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -194,6 +194,9 @@ open class RPListener: NSObject, XCTestObservation {
 
         Task.detached(priority: .high) {
             defer { semaphore.signal() }
+            
+            // Validate configuration before launch creation
+            await self.launchManager.validateConfiguration()
 
             await self.launchManager.incrementBundleCount()
 

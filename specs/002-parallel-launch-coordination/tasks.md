@@ -246,14 +246,15 @@
   - Verify: Correct launch status (aggregated)
   - Check: All sync files cleaned up
 
-- [ ] T030 Add logging for coordination flow in Sources/Utilities/Logger.swift
+- [ ] T030 Create Logger utility in Sources/Utilities/Logger.swift
+  - Implement structured logging with correlation IDs
   - Log: Launch UUID source (env var vs auto-generated)
   - Log: Suite coordination path (file-based vs direct API)
   - Log: Finish coordination decision (last worker vs not)
   - Log: Worker registration/unregistration
   - Include correlation IDs in all logs
 
-- [ ] T031 Add configuration validation in Sources/Entities/AgentConfiguration.swift
+- [ ] T031 Add configuration validation in Sources/Entities/LaunchManager.swift
   - Warn if RP_LAUNCH_UUID set but invalid format
   - Warn if parallel testing disabled (expected enabled)
   - Log platform detection result (simulator vs device)

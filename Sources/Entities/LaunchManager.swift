@@ -60,17 +60,17 @@ actor LaunchManager {
 
     // MARK: - UUID Generation
 
-    /// Get or generate launch UUID for coordination
-    /// - Returns: UUID from environment variable or auto-generated
-    func getOrGenerateLaunchUUID() async -> String {
-        // Return cached UUID if available
-        if let cached = launchUUID {
-            print("📦 [ReportPortal] Using cached UUID: \(cached)")
-            Logger.shared.debug("Using cached launch UUID: \(cached)")
-            return cached
+    /// Get or create launch UUID with file-based coordination
+    /// Priority 1: Use RP_LAUNCH_UUID environment variable if set
+    /// Priority 2: Use file-based coordination to share UUID across workers (simulators only)
+    /// - Returns: Launch UUID to use for this test run
+    func getOrCreateLaunchUUID() -> String {
+        // Return cached UUID if already created
+        if let existingUUID = launchUUID {
+            return existingUUID
         }
 
-        // Priority 1: Check environment variable RP_LAUNCH_UUID
+        // Priority 1: Check environment variable (explicit coordination)
         if let envUUID = ProcessInfo.processInfo.environment["RP_LAUNCH_UUID"],
            !envUUID.isEmpty {
             launchUUID = envUUID
@@ -79,27 +79,49 @@ actor LaunchManager {
             return envUUID
         }
 
-        // Priority 2: Auto-generate UUID based on PGID
+        // Priority 2: File-based UUID coordination (simulators only)
+        // Similar to suite coordination - first worker creates UUID, others read it
         let pid = getpid()
         let pgid = getpgid(pid)
-        print("⚙️ [ReportPortal] No RP_LAUNCH_UUID env var, auto-generating (PID: \(pid), PGID: \(pgid))")
-        Logger.shared.info("Auto-generating launch UUID (PID: \(pid), PGID: \(pgid))")
+        print("⚙️ [ReportPortal] No RP_LAUNCH_UUID env var, using file-based UUID coordination (PID: \(pid), PGID: \(pgid))")
+        Logger.shared.info("Using file-based UUID coordination (PID: \(pid), PGID: \(pgid))")
 
-        let generatedUUID = generateLaunchUUID()
-        launchUUID = generatedUUID
-        print("🔧 [ReportPortal] Generated UUID: \(generatedUUID)")
-        Logger.shared.info("Generated launch UUID: \(generatedUUID)")
-        return generatedUUID
+        let coordinatedUUID = getOrCreateCoordinatedUUID()
+        launchUUID = coordinatedUUID
+        print("🔧 [ReportPortal] Coordinated UUID: \(coordinatedUUID)")
+        Logger.shared.info("Coordinated launch UUID: \(coordinatedUUID)")
+        return coordinatedUUID
     }
-
-    /// Generate launch UUID using RFC 4122 UUID format (required by ReportPortal)
-    /// - Returns: Generated UUID string in standard format (e.g., 550e8400-e29b-41d4-a716-446655440000)
-    private func generateLaunchUUID() -> String {
-        // Generate a proper RFC 4122 UUID that ReportPortal expects
-        // Note: In auto-generation mode without RP_LAUNCH_UUID environment variable,
-        // each process will generate its own UUID, potentially creating multiple launches.
-        // For guaranteed single launch coordination, always set RP_LAUNCH_UUID in pre-action script.
-        return UUID().uuidString
+    
+    /// Get or create launch UUID using file-based coordination
+    /// First worker generates UUID and writes to file, others read from file
+    /// - Returns: Shared launch UUID for all workers
+    private func getOrCreateCoordinatedUUID() -> String {
+        let syncFilePath = "/tmp/reportportal/launch_uuid.txt"
+        
+        // Try to read existing UUID from file
+        if let existingUUID = try? String(contentsOfFile: syncFilePath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+           !existingUUID.isEmpty {
+            Logger.shared.info("📖 Read shared launch UUID from file: \(existingUUID)")
+            return existingUUID
+        }
+        
+        // No existing UUID - we're the first worker, generate and write
+        let newUUID = UUID().uuidString
+        
+        // Create directory if needed
+        let directory = (syncFilePath as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        
+        // Write UUID to file (atomic write)
+        do {
+            try newUUID.write(toFile: syncFilePath, atomically: true, encoding: .utf8)
+            Logger.shared.info("✍️ First worker - wrote launch UUID to file: \(newUUID)")
+        } catch {
+            Logger.shared.warning("⚠️ Failed to write launch UUID to file (will use generated UUID): \(error)")
+        }
+        
+        return newUUID
     }
     
     // MARK: - Configuration Validation
@@ -121,8 +143,13 @@ actor LaunchManager {
                 Logger.shared.info("✅ RP_LAUNCH_UUID format valid: \(envUUID)")
             }
         } else {
-            Logger.shared.warning("[WARNING] RP_LAUNCH_UUID not set. Auto-generating UUID per worker (may create multiple launches). Set RP_LAUNCH_UUID in pre-action script for guaranteed single launch.")
-            print("⚠️ [ReportPortal] RP_LAUNCH_UUID not set - using auto-generated UUIDs")
+            #if targetEnvironment(simulator)
+            Logger.shared.info("[INFO] RP_LAUNCH_UUID not set. Using file-based UUID coordination (single launch guaranteed on simulators).")
+            print("ℹ️  [ReportPortal] Using file-based UUID coordination (/tmp/reportportal/launch_uuid.txt)")
+            #else
+            Logger.shared.warning("[WARNING] RP_LAUNCH_UUID not set on real device. Each test bundle will create separate launch. Set RP_LAUNCH_UUID in pre-action script for single launch.")
+            print("⚠️ [ReportPortal] RP_LAUNCH_UUID not set - real device will create separate launches")
+            #endif
         }
         
         // Log platform detection
@@ -276,6 +303,18 @@ actor LaunchManager {
 
         if newSeverity > currentSeverity {
             aggregatedStatus = newStatus
+        }
+    }
+
+    /// Get debug state for troubleshooting
+    /// - Returns: Description of current launch state
+    func getDebugState() -> String {
+        if let id = launchID {
+            return "LaunchID: \(id)"
+        } else if launchCreationTask != nil {
+            return "Launch creation in progress"
+        } else {
+            return "Launch not started"
         }
     }
 

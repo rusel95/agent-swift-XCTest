@@ -261,24 +261,24 @@ As a test developer, when coordination fails due to system limitations (network 
 
 ### Functional Requirements
 
-- **FR-001**: System MUST ensure exactly one Launch is created per test run regardless of number of parallel workers
+- **FR-001**: System MUST ensure exactly one Launch is created per test run regardless of number of parallel workers. All workers MUST attempt launch creation with identical UUID (from `RP_LAUNCH_UUID` or auto-generated). First worker receives 200 OK with launch ID. Subsequent workers receive 409 Conflict and MUST extract launch ID from error response to proceed with shared launch
 - **FR-002**: System MUST distribute the shared Launch ID to all workers instantly via `RP_LAUNCH_UUID` environment variable (UUID-based coordination eliminates distribution delay)
 - **FR-003**: System MUST track completion status of all workers participating in the test run
 - **FR-004**: System MUST finalize Launch exactly once only after all workers have completed their tests
-- **FR-005**: System MUST aggregate test status across all workers (if any test fails, Launch status is FAILED)
+- **FR-005**: System MUST aggregate test status across all workers using priority hierarchy: FAILED (highest) > STOPPED (medium) > PASSED (lowest). If any worker reports FAILED status, final launch status is FAILED. If all workers report PASSED status, final launch status is PASSED. Status aggregation happens in last worker before calling finish API
 - **FR-006**: System MUST work from Xcode without requiring external scripts or manual pre-configuration
 - **FR-007**: System MUST handle unknown worker counts determined dynamically by Xcode
 - **FR-008**: System MUST use UUID-based coordination for launches (all platforms) AND file-based coordination for suites/finish (simulators only)
 - **FR-009**: System MUST work on iOS Simulators (local Mac and CI/CD) using UUID coordination or file lock fallback via shared `/tmp` directory
-- **FR-010**: System MUST work on iOS Real Devices in both sequential mode (single worker) and parallel mode (multiple devices with `RP_LAUNCH_UUID` coordination)
+- **FR-010**: System MUST work on iOS Real Devices in both sequential mode (single worker) and parallel mode (multiple devices with `RP_LAUNCH_UUID` coordination). Real devices get launch coordination ONLY (no suite/finish coordination due to isolated sandboxes). Parallel real device tests produce single launch with duplicate suites per test class (acceptable limitation)
 - **FR-011**: System MUST isolate coordination between different test runs (separate Launch UUIDs per run)
 - **FR-012**: System MUST complete coordination handshake (Launch creation + UUID distribution) within 10 seconds
 - **FR-013**: System MUST provide clear logging of coordination events for debugging
 - **FR-014**: System MUST handle workers starting with time delays (late joiners can use shared Launch UUID)
 - **FR-015**: System MUST support UUID-based coordination as priority 1 mechanism via `RP_LAUNCH_UUID` environment variable for cross-platform parallel testing
-- **FR-015a**: System MUST generate unique Launch UUID if `RP_LAUNCH_UUID` not provided (format: `{launchName}_{timestamp}_{PGID}`)
+- **FR-015a**: System MUST generate unique Launch UUID if `RP_LAUNCH_UUID` not provided using format: `UUID().uuidString` (standard Swift UUID with dashes, e.g., "550E8400-E29B-41D4-A716-446655440000"). UUID MUST be generated deterministically per test session (not per worker) to ensure all workers use identical UUID
 - **FR-015b**: System MUST use file-based coordination with POSIX flock as priority 2 fallback for simulators when UUID not pre-created
-- **FR-016**: System MUST handle 409 Conflict responses when multiple workers create launch with same UUID (indicates launch already created by another worker)
+- **FR-016**: System MUST handle 409 Conflict responses when multiple workers create launch with same UUID (indicates launch already created by another worker). Worker receiving 409 MUST extract launch ID from error response body field `id` or use UUID as launch ID if extraction fails
 - **FR-017**: Workers MUST be able to report test results continuously throughout execution without blocking coordination
 - **FR-018**: System MUST prevent race conditions when multiple workers attempt to create Launch simultaneously by using custom UUID (first creation succeeds, others get 409 Conflict)
 - **FR-019**: System MUST use file-based "last worker" detection for launch finish coordination (only last worker calls finish API once)
@@ -286,10 +286,11 @@ As a test developer, when coordination fails due to system limitations (network 
 - **FR-021**: System MUST detect parallel execution mode and use appropriate API: v2 async API for parallel runs (launches, logs) for non-blocking operations, v1 sync API for sequential runs for simplicity and backward compatibility
 - **FR-022**: System MUST detect parallel execution mode by checking for multiple active bundles in same process group (via PGID or RP_SESSION_ID)
 - **FR-023**: For launch creation: All workers MUST call `POST /v2/{projectName}/launch` with same custom UUID, handling 409 Conflict as "launch already exists"
-- **FR-024**: For launch creation: Workers MUST extract Launch ID from successful creation response OR from 409 error response body
-- **FR-025**: For suite coordination: System MUST use file-based sync files (one per suite) to prevent duplicate suite creation across workers
-- **FR-026**: For suite coordination: First worker creating a suite MUST write suite ID to `/tmp/reportportal/suite_{name}_{launchID}.sync`, other workers read from file
-- **FR-027**: For suite coordination: Workers MUST poll suite sync file with 100ms intervals and 5-second timeout if suite not yet created
+- **FR-024**: For launch creation: Workers MUST extract Launch ID from successful creation response (field `id` in response body) OR from 409 error response body (field `id` if available, otherwise use UUID as launch ID)
+- **FR-024a**: For launch creation: When first worker's launch creation fails (network error, timeout, 500 server error), worker MUST retry with exponential backoff (1s, 2s, 4s, 8s, maximum 5 retries). If all retries fail, worker MUST create separate launch with generated UUID and log warning "Launch creation failed after 5 retries, creating isolated launch". Tests continue in degraded mode (separate launches instead of unified launch)
+- **FR-025**: For suite coordination: System MUST use file-based sync files (one per suite) to prevent duplicate suite creation across workers. Suite coordination applies ONLY to iOS simulators (not real devices due to isolated sandboxes)
+- **FR-026**: For suite coordination: First worker creating a suite MUST write suite ID to `/tmp/reportportal/suite_{name}_{launchID}.sync`, other workers read from file. File naming format: suite name (sanitized, alphanumeric+underscore only), underscore separator, launch UUID (full UUID with dashes). Example: `/tmp/reportportal/suite_LoginTests_550E8400-E29B-41D4-A716-446655440000.sync`. Launch UUID in filename prevents collisions across different test runs with duplicate suite names
+- **FR-027**: For suite coordination: Workers MUST poll suite sync file with 100ms intervals and 5-second timeout if suite not yet created. After timeout, worker MUST create separate suite instance with warning logged. Polling loop: check file existence → read suite ID → validate format → return ID OR sleep 100ms and retry
 - **FR-028**: For launch finish: Workers MUST register themselves in `/tmp/reportportal/launch_{uuid}_workers.txt` on start
 - **FR-029**: For launch finish: Workers MUST remove themselves from worker tracking file on completion
 - **FR-030**: For launch finish: Last worker (worker count = 0 after self-removal) MUST obtain exclusive lock and call finish API exactly once

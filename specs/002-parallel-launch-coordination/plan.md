@@ -1,26 +1,34 @@
 ````markdown
-# Implementation Plan: UUID-Based Launch Coordination
+# Implementation Plan: Hybrid Launch Coordination
 
-**Branch**: `002-parallel-launch-coordination` | **Date**: 2025-01-31 | **Spec**: [spec.md](./spec.md)
+**Branch**: `002-parallel-launch-coordination` | **Date**: 2025-11-04 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/002-parallel-launch-coordination/spec.md`
 
-**Note**: This plan implements UUID-based coordination ONLY. File lock fallback approach is REMOVED.
+**Note**: This plan implements hybrid coordination: UUID for launches + file-based for suites and finish.
 
 ## Summary
 
-Implement UUID-based launch coordination for parallel test execution in iOS XCTest framework. All workers use a shared UUID (from `RP_LAUNCH_UUID` environment variable or auto-generated) to create a single ReportPortal launch. First worker succeeds (200 OK), others get 409 Conflict (acceptable). All workers report tests to the same launch. On finish, all workers call the finish endpoint - first succeeds (200 OK), others get 404 Not Found (acceptable, treated as success). This approach works cross-platform (simulators + real devices) with zero coordination overhead.
+Implement hybrid coordination strategy for parallel test execution in iOS XCTest framework:
+
+1. **Launch Creation (UUID-based)**: All workers use shared UUID (from `RP_LAUNCH_UUID` env var or auto-generated) to create single ReportPortal launch. First worker succeeds (200 OK), others get 409 Conflict (acceptable). Works cross-platform (simulators + real devices).
+
+2. **Suite Coordination (File-based)**: Each test suite (e.g., `LoginTests`) gets a sync file in `/tmp/reportportal/`. First worker creating a suite writes suite ID to file, other workers read from file. Prevents duplicate suites in hierarchy. Scales to 100+ test classes.
+
+3. **Launch Finish (File-based)**: Workers register in tracking file on start, remove themselves on completion. Last worker (count = 0) obtains exclusive lock and calls finish API once. Ensures single finish call with correct aggregated status. Matches Android/Java implementation pattern.
+
+This hybrid approach combines the cross-platform benefits of UUID coordination (launches) with the scalability benefits of file-based coordination (suites + finish).
 
 ## Technical Context
 
 **Language/Version**: Swift 5.5+ (async/await, Actor model required)  
-**Primary Dependencies**: Foundation, XCTest (system frameworks), Swift Concurrency runtime  
-**Storage**: N/A (coordination via ReportPortal API only, NO file-based coordination)  
+**Primary Dependencies**: Foundation, XCTest (system frameworks), Swift Concurrency runtime, POSIX file APIs  
+**Storage**: `/tmp/reportportal/` directory for coordination files (suite sync files, worker tracking, finish locks)  
 **Testing**: XCTest for unit/integration tests, parallel test runs for validation  
-**Target Platform**: iOS 13+, macOS 10.15+ (Swift Concurrency requirements)  
+**Target Platform**: iOS 13+, macOS 10.15+ (Swift Concurrency requirements), **Simulators for full coordination** (real devices: launch-only)  
 **Project Type**: iOS framework/library (Swift Package + CocoaPods)  
-**Performance Goals**: <10 seconds coordination handshake, <5 seconds overhead vs sequential  
-**Constraints**: No shared memory between workers, no file locks, environment variables read-only  
-**Scale/Scope**: 1-20 parallel workers, works on simulators + real devices
+**Performance Goals**: <10 seconds coordination handshake, <5 seconds overhead vs sequential, <100ms suite lookup  
+**Constraints**: No shared memory between workers, simulators share `/tmp` (real devices isolated), environment variables read-only  
+**Scale/Scope**: 1-20 parallel workers, 10-100 test suites, works on simulators (full) + real devices (launch-only)
 
 ## Constitution Check
 
@@ -29,12 +37,15 @@ Implement UUID-based launch coordination for parallel test execution in iOS XCTe
 **Status**: Constitution file is template-only, no project-specific rules enforced.
 
 **Key Architectural Decisions**:
-- ✅ **No external coordination service** - Uses ReportPortal API native 409 Conflict handling
-- ✅ **No file locks** - Eliminates simulator-only limitation, works on real devices
+- ✅ **Hybrid coordination strategy** - UUID for launches (cross-platform), file-based for suites/finish (simulator-optimized)
+- ✅ **No external coordination service** - Uses ReportPortal API native 409 Conflict handling + POSIX file operations
+- ✅ **Scalable suite coordination** - File-based sync files scale to 100+ test suites without API overhead
+- ✅ **Single finish guarantee** - File-based "last worker" detection ensures exactly one finish API call
 - ✅ **Actor-based state management** - Swift Concurrency for thread-safe coordination
-- ✅ **Tolerant error handling** - 409/404 treated as success, not errors
-- ✅ **Zero configuration** - Auto-generates UUID if not provided
+- ✅ **Tolerant launch creation** - 409 Conflict treated as success (launch already exists)
+- ✅ **Zero configuration** - Auto-generates UUID if not provided, auto-detects parallel mode
 - ✅ **Backward compatible** - Existing v1 API usage for sequential mode unchanged
+- ✅ **Clean hierarchy** - No duplicate launches or suites in ReportPortal
 
 ## Project Structure
 
@@ -58,8 +69,8 @@ specs/002-parallel-launch-coordination/
 
 ```text
 Sources/
-├── RPListener.swift                # [MODIFY] Update for UUID coordination
-├── ReportingService.swift          # [MODIFY] Add UUID support, tolerant finish
+├── RPListener.swift                # [MODIFY] Update for hybrid coordination
+├── ReportingService.swift          # [MODIFY] Add UUID support, keep tolerant 409 handling
 ├── LaunchMode.swift                # [KEEP] Existing
 ├── TestStatus.swift                # [KEEP] Existing
 ├── TestType.swift                  # [KEEP] Existing
@@ -68,29 +79,37 @@ Sources/
 │   ├── FinishLaunchV2EndPoint.swift   # [KEEP] Existing
 │   └── [other endpoints]              # [KEEP] Existing
 ├── Entities/
-│   ├── LaunchManager.swift            # [MODIFY] UUID generation/reading
-│   ├── LaunchCoordinator.swift        # [DELETE] File lock logic removed
-│   ├── LaunchIdLock.swift             # [DELETE] File lock primitives removed
+│   ├── LaunchManager.swift            # [MODIFY] UUID generation/reading (existing)
+│   ├── SuiteCoordinator.swift         # [ADD] File-based suite coordination
+│   ├── FinishCoordinator.swift        # [ADD] File-based finish coordination
+│   ├── WorkerTracker.swift            # [ADD] Worker registration/completion tracking
+│   ├── LaunchCoordinator.swift        # [DELETE] Old file lock logic (already removed)
+│   ├── LaunchIdLock.swift             # [DELETE] Old file lock primitives (already removed)
 │   ├── SuiteOperation.swift           # [KEEP] Existing
 │   ├── TestOperation.swift            # [KEEP] Existing
 │   └── [other entities]               # [KEEP] Existing
 └── Utilities/
+    ├── FileCoordination.swift         # [ADD] POSIX file operations (open, flock, read/write)
     └── [all utilities]                # [KEEP] Existing
 
 Tests/
 ├── ExampleUnitTests/
-│   ├── LaunchManagerTests.swift       # [ADD] UUID generation tests
-│   ├── CoordinationTests.swift        # [ADD] 409/404 handling tests
+│   ├── LaunchManagerTests.swift       # [EXISTS] UUID generation tests
+│   ├── CoordinationTests.swift        # [EXISTS] 409/404 handling tests
+│   ├── SuiteCoordinatorTests.swift    # [ADD] Suite file coordination tests
+│   ├── FinishCoordinatorTests.swift   # [ADD] Last worker detection tests
+│   ├── WorkerTrackerTests.swift       # [ADD] Worker tracking tests
 │   └── [existing tests]               # [KEEP] Existing
 └── ExampleUITests/
     └── [existing UI tests]            # [KEEP] Existing
 
 docs/
-├── xcode-pre-action-setup.md          # [DONE] Quick start guide
+├── xcode-pre-action-setup.md          # [EXISTS] Quick start guide (updated for optional setup)
+├── migration-from-filelock.md         # [ADD] Migration guide from 3.x to 4.0
 └── [other docs]                       # [KEEP] Existing
 ```
 
-**Structure Decision**: UUID-based coordination eliminates need for LaunchCoordinator and LaunchIdLock classes. All coordination logic moves to LaunchManager (UUID generation) and ReportingService (409/404 handling). This simplifies the architecture significantly.
+**Structure Decision**: Hybrid coordination adds 4 new classes (SuiteCoordinator, FinishCoordinator, WorkerTracker, FileCoordination) while keeping LaunchManager (UUID) from existing implementation. This separates concerns: LaunchManager=UUID coordination, SuiteCoordinator=suite hierarchy, FinishCoordinator=finish logic, WorkerTracker=worker lifecycle.
 
 ## Complexity Tracking
 

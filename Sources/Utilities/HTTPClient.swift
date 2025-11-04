@@ -16,7 +16,7 @@ enum HTTPClientError: Error {
   case networkError(Error)
 }
 
-final class HTTPClient: NSObject, URLSessionDelegate, Sendable {
+class HTTPClient: NSObject, URLSessionDelegate, @unchecked Sendable {
 
   private let baseURL: URL
   private let requestTimeout: TimeInterval = 120
@@ -61,7 +61,8 @@ final class HTTPClient: NSObject, URLSessionDelegate, Sendable {
   // MARK: - Async/Await API
 
   /// Call endpoint with async/await (non-blocking)
-  func callEndPoint<T: Decodable>(_ endPoint: EndPoint) async throws -> T {
+  /// Note: Marked as open to allow overriding in tests
+  open func callEndPoint<T: Decodable>(_ endPoint: EndPoint) async throws -> T {
     let request = try buildRequest(for: endPoint)
 
     let (data, response): (Data, URLResponse)

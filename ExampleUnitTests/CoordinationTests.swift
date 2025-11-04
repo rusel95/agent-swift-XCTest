@@ -20,13 +20,14 @@ final class CoordinationTests: XCTestCase {
     override func setUp() async throws {
         // Create mock configuration for testing
         mockConfiguration = AgentConfiguration(
-            portalURL: "https://reportportal.example.com/api/v1/",
-            portalToken: "test-token",
+            reportPortalURL: URL(string: "https://reportportal.example.com/api/v1/")!,
             projectName: "test-project",
             launchName: "Test Launch",
-            tags: [],
-            launchMode: .default,
             shouldSendReport: true,
+            portalToken: "test-token",
+            tags: [],
+            shouldFinishLaunch: true,
+            launchMode: .default,
             testNameRules: []
         )
     }

@@ -260,17 +260,17 @@ As a test developer, when coordination fails due to system limitations (network 
 ### Functional Requirements
 
 - **FR-001**: System MUST ensure exactly one Launch is created per test run regardless of number of parallel workers
-- **FR-002**: System MUST distribute the shared Launch ID to all workers within 5 seconds of Launch creation
+- **FR-002**: System MUST distribute the shared Launch ID to all workers instantly via `RP_LAUNCH_UUID` environment variable (UUID-based coordination eliminates distribution delay)
 - **FR-003**: System MUST track completion status of all workers participating in the test run
 - **FR-004**: System MUST finalize Launch exactly once only after all workers have completed their tests
 - **FR-005**: System MUST aggregate test status across all workers (if any test fails, Launch status is FAILED)
 - **FR-006**: System MUST work from Xcode without requiring external scripts or manual pre-configuration
 - **FR-007**: System MUST handle unknown worker counts determined dynamically by Xcode
-- **FR-008**: System MUST coordinate across multiple independent processes with no shared memory, using UUID-based coordination (priority 1) or file-based coordination (priority 2 fallback for simulators)
+- **FR-008**: System MUST use UUID-based coordination for launches (all platforms) AND file-based coordination for suites/finish (simulators only)
 - **FR-009**: System MUST work on iOS Simulators (local Mac and CI/CD) using UUID coordination or file lock fallback via shared `/tmp` directory
 - **FR-010**: System MUST work on iOS Real Devices in both sequential mode (single worker) and parallel mode (multiple devices with `RP_LAUNCH_UUID` coordination)
 - **FR-011**: System MUST isolate coordination between different test runs (separate Launch UUIDs per run)
-- **FR-012**: System MUST complete coordination handshake (Launch creation + ID distribution) within 10 seconds
+- **FR-012**: System MUST complete coordination handshake (Launch creation + UUID distribution) within 10 seconds
 - **FR-013**: System MUST provide clear logging of coordination events for debugging
 - **FR-014**: System MUST handle workers starting with time delays (late joiners can use shared Launch UUID)
 - **FR-015**: System MUST support UUID-based coordination as priority 1 mechanism via `RP_LAUNCH_UUID` environment variable for cross-platform parallel testing

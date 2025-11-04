@@ -14,27 +14,27 @@
 
 ### Launch Coordination
 
-- [ ] CHK001 - Are requirements defined for all workers attempting simultaneous launch creation? [Completeness, Spec §FR-001]
-- [ ] CHK002 - Is the UUID generation format explicitly specified when `RP_LAUNCH_UUID` is not provided? [Clarity, Spec §FR-015a]
-- [ ] CHK003 - Are requirements defined for launch creation with custom UUID across ALL platforms (simulators + real devices)? [Coverage, Spec §FR-008]
-- [ ] CHK004 - Is the behavior specified when first worker's launch creation fails (network error, timeout)? [Gap, Exception Flow]
-- [ ] CHK005 - Are requirements defined for extracting launch ID from 409 Conflict error responses? [Completeness, Spec §FR-024]
+- [X] CHK001 - Are requirements defined for all workers attempting simultaneous launch creation? [✅ RESOLVED: FR-001 specifies all workers attempt creation, first succeeds with 200 OK, others get 409 Conflict]
+- [X] CHK002 - Is the UUID generation format explicitly specified when `RP_LAUNCH_UUID` is not provided? [✅ RESOLVED: FR-015a specifies UUID().uuidString format]
+- [X] CHK003 - Are requirements defined for launch creation with custom UUID across ALL platforms (simulators + real devices)? [✅ RESOLVED: FR-010 clarifies real devices support launch coordination via UUID, suite duplication acceptable]
+- [X] CHK004 - Is the behavior specified when first worker's launch creation fails (network error, timeout)? [✅ RESOLVED: FR-024a specifies exponential backoff retry, degraded mode if all retries fail]
+- [X] CHK005 - Are requirements defined for extracting launch ID from 409 Conflict error responses? [✅ RESOLVED: FR-016 and FR-024 specify extraction from response body field 'id']
 
 ### Suite Coordination
 
-- [ ] CHK006 - Are suite coordination requirements explicitly scoped to simulators only (excluding real devices)? [Clarity, Spec §FR-008]
-- [ ] CHK007 - Is the suite sync file naming format fully specified to prevent collisions across test runs? [Completeness, Spec §FR-026]
-- [ ] CHK008 - Are requirements defined for handling duplicate suite names across different test runs? [Edge Case, Addressed in spec Q&A]
+- [X] CHK006 - Are suite coordination requirements explicitly scoped to simulators only (excluding real devices)? [✅ RESOLVED: FR-025 explicitly states "simulators only due to isolated sandboxes"]
+- [X] CHK007 - Is the suite sync file naming format fully specified to prevent collisions across test runs? [✅ RESOLVED: FR-026 specifies format with sanitization rules and launch UUID inclusion]
+- [X] CHK008 - Are requirements defined for handling duplicate suite names across different test runs? [✅ RESOLVED: FR-026 includes launch UUID in filename to prevent collision]
 - [X] CHK009 - Is the behavior specified when suite sync file is corrupted or unreadable? [✅ RESOLVED: Added FR-047]
-- [ ] CHK010 - Are timeout and retry requirements quantified for suite sync file polling? [Clarity, Spec §FR-027]
+- [X] CHK010 - Are timeout and retry requirements quantified for suite sync file polling? [✅ RESOLVED: FR-027 specifies 100ms intervals, 5-second timeout, fallback behavior]
 
 ### Finish Coordination
 
-- [ ] CHK011 - Is "last worker" detection logic explicitly defined with worker count = 0 criteria? [Clarity, Spec §FR-030]
-- [ ] CHK012 - Are requirements defined for worker registration at test bundle start? [Completeness, Spec §FR-028]
-- [ ] CHK013 - Are requirements defined for worker unregistration at test bundle finish? [Completeness, Spec §FR-029]
-- [ ] CHK014 - Is the status aggregation hierarchy (FAILED > STOPPED > PASSED) explicitly documented? [Clarity, Spec §FR-031]
-- [ ] CHK015 - Are requirements defined for what non-last workers must do (skip finish call entirely)? [Completeness, Spec §FR-032]
+- [X] CHK011 - Is "last worker" detection logic explicitly defined with worker count = 0 criteria? [✅ RESOLVED: FR-030 explicitly defines "count == 0 after self-removal"]
+- [X] CHK012 - Are requirements defined for worker registration at test bundle start? [✅ RESOLVED: FR-028 specifies registration format, timing, file operations]
+- [X] CHK013 - Are requirements defined for worker unregistration at test bundle finish? [✅ RESOLVED: FR-029 specifies atomic removal, error handling]
+- [X] CHK014 - Is the status aggregation hierarchy (FAILED > STOPPED > PASSED) explicitly documented? [✅ RESOLVED: FR-005 and FR-031 document priority hierarchy]
+- [X] CHK015 - Are requirements defined for what non-last workers must do (skip finish call entirely)? [✅ RESOLVED: FR-032 explicitly states "skip finish API call entirely"]
 
 ---
 
@@ -50,19 +50,19 @@
 
 ## Data Loss Prevention
 
-- [ ] CHK021 - Are requirements defined to ensure test results are never lost if launch finish fails? [Completeness, Addressed in spec but not explicit FR]
+- [X] CHK021 - Are requirements defined to ensure test results are never lost if launch finish fails? [✅ RESOLVED: FR-048 ensures immediate test reporting, no buffering]
 - [X] CHK022 - Is the behavior specified when last worker crashes before calling finish API? [✅ RESOLVED: Known Limitations section]
 - [X] CHK023 - Are requirements defined for partial worker failure (some workers crash, others complete)? [✅ RESOLVED: Known Limitations section]
-- [ ] CHK024 - Is the cleanup requirement specified for orphaned coordination files after successful finish? [Completeness, Spec §FR-020]
+- [X] CHK024 - Is the cleanup requirement specified for orphaned coordination files after successful finish? [✅ RESOLVED: FR-020 specifies cleanup by last worker, files to delete, error handling]
 
 ---
 
 ## Requirement Clarity & Measurability
 
-- [ ] CHK025 - Can "exactly one Launch" be objectively verified in acceptance tests? [Measurability, Spec §FR-001]
-- [ ] CHK026 - Is "within 10 seconds" coordination handshake time measurable and testable? [Measurability, Spec §FR-012]
+- [X] CHK025 - Can "exactly one Launch" be objectively verified in acceptance tests? [✅ RESOLVED: SC-001 specifies API query verification method]
+- [X] CHK026 - Is "within 10 seconds" coordination handshake time measurable and testable? [✅ RESOLVED: SC-005 specifies timestamp logging verification method]
 - [X] CHK027 - Are "100+ test suites" scalability requirements quantified with specific thresholds? [✅ RESOLVED: Added NFR-003]
-- [ ] CHK028 - Is "single finish API call" requirement verifiable through logging or API mocking? [Measurability, Spec §FR-030]
+- [X] CHK028 - Is "single finish API call" requirement verifiable through logging or API mocking? [✅ RESOLVED: FR-049 specifies structured logging for finish verification]
 
 ---
 

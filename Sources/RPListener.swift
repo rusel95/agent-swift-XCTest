@@ -82,6 +82,11 @@ open class RPListener: NSObject, XCTestObservation {
     
     // Suite coordination for file-based deduplication (simulators only)
     private var suiteCoordinator: SuiteCoordinator?
+    
+    // Worker and finish coordination for parallel execution (simulators only)
+    private var workerTracker: WorkerTracker?
+    private var finishCoordinator: FinishCoordinator?
+    private var workerID: String?  // Current worker identifier (PID or PGID)
 
     /// Enhanced launch name (used for coordination file cleanup)
     private var enhancedLaunchName: String?
@@ -167,12 +172,19 @@ open class RPListener: NSObject, XCTestObservation {
         
         // Initialize suite coordinator for file-based deduplication (simulators only)
         self.suiteCoordinator = SuiteCoordinator()
+        
+        // Initialize finish coordination actors (simulators only)
+        self.workerTracker = WorkerTracker()
+        self.finishCoordinator = FinishCoordinator()
+        
+        // Generate worker ID from process identifiers
+        let pid = getpid()
+        let pgid = getpgid(pid)
+        self.workerID = "\(pid)_\(pgid)"
 
         // Log bundle start
         let bundleName = (testBundle.bundlePath as NSString).lastPathComponent
-        let pid = getpid()
-        let pgid = getpgid(pid)
-        print("🟢 [ReportPortal] Bundle started: \(bundleName) (PID: \(pid), PGID: \(pgid))")
+        print("🟢 [ReportPortal] Bundle started: \(bundleName) (PID: \(pid), PGID: \(pgid), WorkerID: \(self.workerID!))")
         Logger.shared.info("Bundle started: \(bundleName)")
 
         // Increment bundle count and create launch if needed
@@ -225,6 +237,16 @@ open class RPListener: NSObject, XCTestObservation {
 
                 print("✅ [ReportPortal] Launch ready: \(launchID)")
                 Logger.shared.info("Launch ready - using launch ID: \(launchID) (UUID: \(launchUUID))")
+                
+                // Register worker in WorkerTracker (for finish coordination)
+                if let tracker = self.workerTracker, let workerID = self.workerID {
+                    do {
+                        try await tracker.registerWorker(uuid: launchUUID, workerID: workerID)
+                        Logger.shared.info("Worker registered: \(workerID)")
+                    } catch {
+                        Logger.shared.error("Failed to register worker: \(error.localizedDescription)")
+                    }
+                }
             } catch {
                 Logger.shared.error("Failed to get/create launch: \(error.localizedDescription)")
             }

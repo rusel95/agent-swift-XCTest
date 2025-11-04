@@ -330,14 +330,23 @@
   - Explain when to use custom UUID (CI/CD, reproducible runs)
   - Update script example
 
-- [ ] T038 Create migration guide in docs/migration-from-filelock.md
-  - Title: "Migrating from File Lock to Hybrid Coordination"
-  - Section: What changed (LaunchCoordinator removed, hybrid approach)
-  - Section: Breaking changes (version 4.0.0)
-  - Section: What to do (nothing for simulators, unset old env vars)
-  - Section: Real device changes (launch coordination only)
+- [X] T038 Create migration guide in docs/migration-from-filelock.md
+  - ✅ COMPLETED: Comprehensive migration guide created
+  - ✅ Section: What changed (hybrid coordination approach)
+  - ✅ Section: Breaking changes (version 4.0.0 details)
+  - ✅ Section: Migration steps (simulators, real devices, cleanup)
+  - ✅ Section: Validation steps (how to verify success)
+  - ✅ Section: Troubleshooting (common issues and solutions)
+  - ✅ Section: Technical details (coordination flow, file structure)
 
-- [ ] T039 Update CHANGELOG.md for version 4.0.0 in CHANGELOG.md
+- [X] T039 Update CHANGELOG.md for version 4.0.0 in CHANGELOG.md
+  - ✅ COMPLETED: Version 4.0.0 entry added
+  - ✅ Breaking changes section with migration notes
+  - ✅ Detailed list of added features
+  - ✅ List of removed components
+  - ✅ Fixed issues documented
+  - ✅ Performance improvements listed
+  - ✅ Link to migration guide
   - Version: 4.0.0 (MAJOR breaking change)
   - Added: Hybrid coordination (UUID + file-based)
   - Added: Zero-config parallel testing

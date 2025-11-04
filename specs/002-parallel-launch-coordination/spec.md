@@ -282,7 +282,7 @@ As a test developer, when coordination fails due to system limitations (network 
 - **FR-017**: Workers MUST be able to report test results continuously throughout execution without blocking coordination
 - **FR-018**: System MUST prevent race conditions when multiple workers attempt to create Launch simultaneously by using custom UUID (first creation succeeds, others get 409 Conflict)
 - **FR-019**: System MUST use file-based "last worker" detection for launch finish coordination (only last worker calls finish API once)
-- **FR-020**: System MUST clean up coordination resources after Launch finalization (worker tracking files, suite sync files, finish lock files)
+- **FR-020**: System MUST clean up coordination resources after Launch finalization: worker tracking files (`/tmp/reportportal/launch_{uuid}_workers.txt`), suite sync files (`/tmp/reportportal/suite_*_{launchID}.sync`), finish lock files (`/tmp/reportportal/launch_{uuid}_finish.lock`). Cleanup MUST be performed by last worker after successful finish API call. If cleanup fails, system MUST log warning but proceed (orphaned files acceptable, will be overwritten by next test run with same UUID)
 - **FR-021**: System MUST detect parallel execution mode and use appropriate API: v2 async API for parallel runs (launches, logs) for non-blocking operations, v1 sync API for sequential runs for simplicity and backward compatibility
 - **FR-022**: System MUST detect parallel execution mode by checking for multiple active bundles in same process group (via PGID or RP_SESSION_ID)
 - **FR-023**: For launch creation: All workers MUST call `POST /v2/{projectName}/launch` with same custom UUID, handling 409 Conflict as "launch already exists"
@@ -291,9 +291,9 @@ As a test developer, when coordination fails due to system limitations (network 
 - **FR-025**: For suite coordination: System MUST use file-based sync files (one per suite) to prevent duplicate suite creation across workers. Suite coordination applies ONLY to iOS simulators (not real devices due to isolated sandboxes)
 - **FR-026**: For suite coordination: First worker creating a suite MUST write suite ID to `/tmp/reportportal/suite_{name}_{launchID}.sync`, other workers read from file. File naming format: suite name (sanitized, alphanumeric+underscore only), underscore separator, launch UUID (full UUID with dashes). Example: `/tmp/reportportal/suite_LoginTests_550E8400-E29B-41D4-A716-446655440000.sync`. Launch UUID in filename prevents collisions across different test runs with duplicate suite names
 - **FR-027**: For suite coordination: Workers MUST poll suite sync file with 100ms intervals and 5-second timeout if suite not yet created. After timeout, worker MUST create separate suite instance with warning logged. Polling loop: check file existence → read suite ID → validate format → return ID OR sleep 100ms and retry
-- **FR-028**: For launch finish: Workers MUST register themselves in `/tmp/reportportal/launch_{uuid}_workers.txt` on start
-- **FR-029**: For launch finish: Workers MUST remove themselves from worker tracking file on completion
-- **FR-030**: For launch finish: Last worker (worker count = 0 after self-removal) MUST obtain exclusive lock and call finish API exactly once
+- **FR-028**: For launch finish: Workers MUST register themselves in `/tmp/reportportal/launch_{uuid}_workers.txt` on test bundle start (before any test execution). Registration format: one line per worker with format `{workerID}|{timestamp}|{status}` where workerID is unique identifier (PID or bundle ID), timestamp is ISO8601 registration time, status is "ACTIVE". File operations MUST use POSIX flock for exclusive access during registration
+- **FR-029**: For launch finish: Workers MUST remove themselves from worker tracking file on test bundle completion (after all tests finish). Removal MUST be atomic read-modify-write: acquire lock → read all lines → remove matching workerID line → write remaining lines → release lock. Worker MUST log warning if removal fails (file missing, lock timeout) and proceed with graceful degradation
+- **FR-030**: For launch finish: Last worker (worker count = 0 after self-removal from tracking file) MUST obtain exclusive lock on `/tmp/reportportal/launch_{uuid}_finish.lock` and call finish API exactly once. Worker count check: after removing self from tracking file, count remaining lines in file. If count == 0, this worker is last. Non-last workers (count > 0) MUST skip finish API call entirely
 - **FR-031**: For launch finish: Last worker MUST aggregate status from all workers before calling finish (FAILED > STOPPED > PASSED hierarchy)
 - **FR-032**: For launch finish: Non-last workers MUST skip finish API call entirely (file-based coordination ensures single finish call)
 - **FR-033**: System MUST use session-based file naming with PGID or launch UUID for coordination files to isolate different test runs
@@ -306,6 +306,8 @@ As a test developer, when coordination fails due to system limitations (network 
 - **FR-040**: For file-based coordination (simulators only): System MUST use POSIX flock() for exclusive access to coordination files (suite sync files, worker tracking files, finish lock files) with 10-second timeout and exponential backoff retry (100ms, 200ms, 400ms, 800ms, 1600ms intervals)
 - **FR-044**: For worker tracking: System MUST perform atomic read-modify-write operations on worker tracking file to prevent race conditions during concurrent worker registration/unregistration (acquire lock → read count → modify count → write count → release lock as single atomic operation)
 - **FR-047**: For suite coordination: System MUST handle corrupted or invalid sync files gracefully by falling back to direct suite creation (may result in duplicate suites). Worker MUST log warning about coordination failure with sync file path for debugging
+- **FR-048**: System MUST ensure test results are never lost if launch finish fails. All workers MUST report tests to ReportPortal immediately as tests execute (not buffered until finish). If finish API call fails, test results remain visible in ReportPortal UI even if launch status shows "IN_PROGRESS". Workers MUST log error on finish failure but NOT delete or rollback reported test results
+- **FR-049**: System MUST enable verification of "single finish API call" requirement through structured logging. Last worker MUST log with level INFO: "Calling finish API as last worker" with correlation ID before finish API call. Non-last workers MUST log with level DEBUG: "Skipping finish API call, not last worker (remaining workers: {count})" with correlation ID. All finish-related logs MUST include launch UUID for traceability
 
 ### Key Entities
 
@@ -340,21 +342,21 @@ The following behaviors are known limitations of the current design and are NOT 
 ### Measurable Outcomes
 
 **For Parallel Simulator Tests:**
-- **SC-001**: When running parallel tests with 5 **simulator** workers, exactly 1 Launch appears in ReportPortal (not 5 separate Launches)
-- **SC-002**: All test results from all **simulator** workers appear in the single unified Launch (zero data loss)
-- **SC-003**: Launch finalizes only after the last **simulator** worker completes, regardless of which worker finishes first
-- **SC-004**: Launch status correctly reflects aggregated results across all **simulators** (FAILED if any worker had failures, PASSED if all passed)
-- **SC-005**: **Simulator** coordination completes within 10 seconds from first worker start to all workers having Launch ID
-- **SC-006**: **Simulator** parallel tests can be run directly from Xcode without any manual pre-execution steps or scripts
-- **SC-007**: System handles test runs with 1-20 **simulator** workers without configuration changes
-- **SC-008**: 100% of parallel **simulator** test runs result in single unified Launch (no duplicate reports)
-- **SC-009**: Zero test results lost due to premature Launch closure in **simulator** parallel runs (compared to current 80% data loss when first worker finishes early)
-- **SC-010**: **Simulator** coordination overhead adds less than 5 seconds to total test execution time
+- **SC-001**: When running parallel tests with 5 **simulator** workers, exactly 1 Launch appears in ReportPortal (not 5 separate Launches). Verification: Query ReportPortal API `GET /v1/{project}/launch?filter.name.eq={launchName}` after test completion, count must equal 1
+- **SC-002**: All test results from all **simulator** workers appear in the single unified Launch (zero data loss). Verification: Sum test counts from all workers, compare with total test count in ReportPortal launch (must match exactly)
+- **SC-003**: Launch finalizes only after the last **simulator** worker completes, regardless of which worker finishes first. Verification: Log timestamps of worker completions and launch finish API call, finish timestamp must be >= all worker completion timestamps
+- **SC-004**: Launch status correctly reflects aggregated results across all **simulators** (FAILED if any worker had failures, PASSED if all passed). Verification: Inject failing test in worker 2 only, verify final launch status is FAILED. Run with all passing tests, verify final launch status is PASSED
+- **SC-005**: **Simulator** coordination completes within 10 seconds from first worker start to all workers having Launch ID. Verification: Log timestamp when first worker starts and when last worker obtains launch ID, difference must be <= 10 seconds (measured in acceptance tests)
+- **SC-006**: **Simulator** parallel tests can be run directly from Xcode without any manual pre-execution steps or scripts. Verification: Fresh Xcode workspace, press "Run Tests", verify single launch created without errors
+- **SC-007**: System handles test runs with 1-20 **simulator** workers without configuration changes. Verification: Run acceptance tests with 1, 2, 5, 10, 20 workers, all produce single launch
+- **SC-008**: 100% of parallel **simulator** test runs result in single unified Launch (no duplicate reports). Verification: Run 50 test executions with 5 workers each, count launches in ReportPortal, must equal 50 (not 250)
+- **SC-009**: Zero test results lost due to premature Launch closure in **simulator** parallel runs (compared to current 80% data loss when first worker finishes early). Verification: Workers with uneven test distribution (worker1=5 tests, worker2=50 tests), verify all 55 tests appear in ReportPortal
+- **SC-010**: **Simulator** coordination overhead adds less than 5 seconds to total test execution time. Verification: Run same test suite with coordination disabled (sequential) and enabled (parallel), compare total execution time difference excluding test execution itself
 
 **For Sequential Tests (Any Platform):**
-- **SC-011**: Single worker tests (sequential mode) work on both **simulators** and **real devices** without coordination
-- **SC-012**: Sequential mode on **real devices** produces exactly 1 Launch with all test results
-- **SC-013**: Sequential mode has zero coordination overhead (uses simple v1 API)
+- **SC-011**: Single worker tests (sequential mode) work on both **simulators** and **real devices** without coordination. Verification: Run sequential test on simulator and real device, verify single launch created in both cases
+- **SC-012**: Sequential mode on **real devices** produces exactly 1 Launch with all test results. Verification: Same as SC-001 but with real device target
+- **SC-013**: Sequential mode has zero coordination overhead (uses simple v1 API). Verification: Check logs for coordination messages, should contain "Sequential mode detected, skipping coordination"
 
 ## Coordination Flow *(informational)*
 

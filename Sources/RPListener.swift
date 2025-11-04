@@ -79,6 +79,9 @@ open class RPListener: NSObject, XCTestObservation {
     private let launchManager = LaunchManager.shared
     private let operationTracker = OperationTracker.shared
     private let rootSuiteIDManager = RootSuiteIDManager()
+    
+    // Suite coordination for file-based deduplication (simulators only)
+    private var suiteCoordinator: SuiteCoordinator?
 
     /// Enhanced launch name (used for coordination file cleanup)
     private var enhancedLaunchName: String?
@@ -161,6 +164,9 @@ open class RPListener: NSObject, XCTestObservation {
         // Create service for v4.0.0 async/await parallel execution
         let reportingService = ReportingService(configuration: configuration)
         self.reportingService = reportingService
+        
+        // Initialize suite coordinator for file-based deduplication (simulators only)
+        self.suiteCoordinator = SuiteCoordinator()
 
         // Log bundle start
         let bundleName = (testBundle.bundlePath as NSString).lastPathComponent
@@ -387,8 +393,12 @@ open class RPListener: NSObject, XCTestObservation {
                 let apiStartTime = Date()
                 Logger.shared.info("📡 Calling ReportPortal API to create suite...", correlationID: correlationID)
 
-                // Create suite directly - no coordination needed (each worker reports its own suites)
-                let suiteID = try await asyncService.startSuite(operation: operation, launchID: launchID)
+                // Use suite coordinator for file-based deduplication (if available)
+                let suiteID = try await asyncService.startSuite(
+                    operation: operation,
+                    launchID: launchID,
+                    coordinator: self.suiteCoordinator
+                )
 
                 let apiDuration = Date().timeIntervalSince(apiStartTime)
                 Logger.shared.info("📡 API call completed in \(Int(apiDuration * 1000))ms", correlationID: correlationID)

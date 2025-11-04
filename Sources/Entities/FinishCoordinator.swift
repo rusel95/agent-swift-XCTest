@@ -158,8 +158,9 @@ actor FinishCoordinator {
     func cleanupStatusFiles(uuid: String) async {
         let statusFilePath = "\(baseDirectory)/launch_\(uuid)_statuses.txt"
         let finishLockPath = "\(baseDirectory)/launch_\(uuid)_finish.lock"
+        let launchUUIDPath = "\(baseDirectory)/launch_uuid.txt"
         
-        for filePath in [statusFilePath, finishLockPath] {
+        for filePath in [statusFilePath, finishLockPath, launchUUIDPath] {
             do {
                 try FileManager.default.removeItem(atPath: filePath)
                 print("[\(correlationID)] Cleaned up finish coordination file: \(filePath)")

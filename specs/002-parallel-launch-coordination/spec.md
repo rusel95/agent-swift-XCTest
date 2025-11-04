@@ -282,14 +282,14 @@ As a test developer, when coordination fails due to system limitations (network 
 - **FR-017**: Workers MUST be able to report test results continuously throughout execution without blocking coordination
 - **FR-018**: System MUST prevent race conditions when multiple workers attempt to create Launch simultaneously by using custom UUID (first creation succeeds, others get 409 Conflict)
 - **FR-019**: System MUST use file-based "last worker" detection for launch finish coordination (only last worker calls finish API once)
-- **FR-020**: System MUST clean up coordination resources after Launch finalization: worker tracking files (`/tmp/reportportal/launch_{uuid}_workers.txt`), suite sync files (`/tmp/reportportal/suite_*_{launchID}.sync`), finish lock files (`/tmp/reportportal/launch_{uuid}_finish.lock`). Cleanup MUST be performed by last worker after successful finish API call. If cleanup fails, system MUST log warning but proceed (orphaned files acceptable, will be overwritten by next test run with same UUID)
+- **FR-020**: System MUST clean up coordination resources after Launch finalization: worker tracking files (`/tmp/reportportal/launch_{uuid}_workers.txt`), suite sync files (`/tmp/reportportal/suite_*_{launchID}.id`), suite lock files (`/tmp/reportportal/suite_*_{launchID}.lock`), finish lock files (`/tmp/reportportal/launch_{uuid}_finish.lock`). Cleanup MUST be performed by last worker after successful finish API call. If cleanup fails, system MUST log warning but proceed (orphaned files acceptable, will be overwritten by next test run with same UUID)
 - **FR-021**: System MUST detect parallel execution mode and use appropriate API: v2 async API for parallel runs (launches, logs) for non-blocking operations, v1 sync API for sequential runs for simplicity and backward compatibility
 - **FR-022**: System MUST detect parallel execution mode by checking for multiple active bundles in same process group (via PGID or RP_SESSION_ID)
 - **FR-023**: For launch creation: All workers MUST call `POST /v2/{projectName}/launch` with same custom UUID, handling 409 Conflict as "launch already exists"
 - **FR-024**: For launch creation: Workers MUST extract Launch ID from successful creation response (field `id` in response body) OR from 409 error response body (field `id` if available, otherwise use UUID as launch ID)
 - **FR-024a**: For launch creation: When first worker's launch creation fails (network error, timeout, 500 server error), worker MUST retry with exponential backoff (1s, 2s, 4s, 8s, maximum 5 retries). If all retries fail, worker MUST create separate launch with generated UUID and log warning "Launch creation failed after 5 retries, creating isolated launch". Tests continue in degraded mode (separate launches instead of unified launch)
 - **FR-025**: For suite coordination: System MUST use file-based sync files (one per suite) to prevent duplicate suite creation across workers. Suite coordination applies ONLY to iOS simulators (not real devices due to isolated sandboxes)
-- **FR-026**: For suite coordination: First worker creating a suite MUST write suite ID to `/tmp/reportportal/suite_{name}_{launchID}.sync`, other workers read from file. File naming format: suite name (sanitized, alphanumeric+underscore only), underscore separator, launch UUID (full UUID with dashes). Example: `/tmp/reportportal/suite_LoginTests_550E8400-E29B-41D4-A716-446655440000.sync`. Launch UUID in filename prevents collisions across different test runs with duplicate suite names
+- **FR-026**: For suite coordination: First worker creating a suite MUST write suite ID to `/tmp/reportportal/suite_{name}_{launchID}.id` (suite ID file) using lock file `/tmp/reportportal/suite_{name}_{launchID}.lock` (lock file). Other workers read from suite ID file. File naming format: suite name (sanitized, alphanumeric+underscore only), underscore separator, launch UUID (full UUID with dashes). Example: `/tmp/reportportal/suite_LoginTests_550E8400-E29B-41D4-A716-446655440000.id`. Launch UUID in filename prevents collisions across different test runs with duplicate suite names
 - **FR-027**: For suite coordination: Workers MUST poll suite sync file with 100ms intervals and 5-second timeout if suite not yet created. After timeout, worker MUST create separate suite instance with warning logged. Polling loop: check file existence → read suite ID → validate format → return ID OR sleep 100ms and retry
 - **FR-028**: For launch finish: Workers MUST register themselves in `/tmp/reportportal/launch_{uuid}_workers.txt` on test bundle start (before any test execution). Registration format: one line per worker with format `{workerID}|{timestamp}|{status}` where workerID is unique identifier (PID or bundle ID), timestamp is ISO8601 registration time, status is "ACTIVE". File operations MUST use POSIX flock for exclusive access during registration
 - **FR-029**: For launch finish: Workers MUST remove themselves from worker tracking file on test bundle completion (after all tests finish). Removal MUST be atomic read-modify-write: acquire lock → read all lines → remove matching workerID line → write remaining lines → release lock. Worker MUST log warning if removal fails (file missing, lock timeout) and proceed with graceful degradation
@@ -397,8 +397,8 @@ For each test suite (e.g., `LoginTests`, `CheckoutTests`):
 
 1. **Check for existing suite** (File-based lookup):
    ```swift
-   let suiteFile = "/tmp/reportportal/suite_\(suiteName)_\(launchID).sync"
-   if let existingSuiteID = readSuiteID(from: suiteFile) {
+   let suiteIDFile = "/tmp/reportportal/suite_\(suiteName)_\(launchID).id"
+   if let existingSuiteID = readSuiteID(from: suiteIDFile) {
        return existingSuiteID // Suite already created by another worker
    }
    ```
@@ -406,16 +406,17 @@ For each test suite (e.g., `LoginTests`, `CheckoutTests`):
 2. **Create new suite** (First worker for this suite):
    ```swift
    // Obtain file lock
-   let lockFD = open(suiteFile + ".lock", O_CREAT | O_EXCL)
+   let lockFile = "/tmp/reportportal/suite_\(suiteName)_\(launchID).lock"
+   let lockFD = open(lockFile, O_CREAT | O_EXCL)
    if lockFD >= 0 {
        // This worker is first - create suite
        let suiteID = try await reportingService.startSuite(name: suiteName, launchID: launchID)
-       writeSuiteID(suiteID, to: suiteFile)
+       writeSuiteID(suiteID, to: suiteIDFile)
        close(lockFD)
        return suiteID
    } else {
        // Another worker is creating - poll for result
-       return await pollSuiteID(from: suiteFile, timeout: 5)
+       return await pollSuiteID(from: suiteIDFile, timeout: 5)
    }
    ```
 

@@ -1,6 +1,38 @@
-# Xcode Pre-Action Script for UUID Coordination
+# Xcode Pre-Action Script for UUID Coordination (OPTIONAL)
 
-## Quick Setup (30 seconds)
+> **ℹ️ Note**: This setup is **OPTIONAL** for most use cases. The agent works out-of-the-box with zero configuration for simulator testing.
+
+## When Do You Need This?
+
+**✅ You NEED this for:**
+- Parallel testing on **real devices** (isolated sandboxes require explicit UUID)
+- CI/CD pipelines with complex coordination requirements
+- Debugging coordination issues
+- Explicit control over launch UUID for tracking
+
+**❌ You DON'T need this for:**
+- **Local simulator testing** (auto-generation works perfectly)
+- **CI/CD simulator testing** (auto-generation works perfectly)
+- **90% of use cases** (let the agent handle it automatically)
+
+## How Auto-Generation Works (Zero Config)
+
+When you don't set `RP_LAUNCH_UUID`, the agent automatically:
+1. Generates a proper RFC 4122 UUID using `UUID().uuidString`
+2. All workers in the same Xcode test run share the same process group ID (PGID)
+3. Workers coordinate using the generated UUID
+4. Result: **Single unified launch** in ReportPortal
+
+**Example log output (auto-generation):**
+```
+⚙️ [ReportPortal] No RP_LAUNCH_UUID env var, auto-generating (PID: 5263, PGID: 5263)
+🔧 [ReportPortal] Generated UUID: CADF496A-7B77-42A2-BAA8-6F263FA99F91
+✅ [ReportPortal] Launch created successfully - ID: CADF496A-7B77-42A2-BAA8-6F263FA99F91
+```
+
+## Manual Setup (Advanced Users)
+
+If you need explicit control (real devices, CI/CD), follow these steps:
 
 1. **Open Xcode** → Select your scheme → **Edit Scheme** (⌘<)
 2. Navigate to **Test** → **Pre-Actions** → Click **+** → **New Run Script Action**
@@ -9,22 +41,20 @@
 ```bash
 #!/bin/bash
 # Generate RFC 4122 UUID for ReportPortal coordination
-# Use uuidgen to create a proper UUID format that ReportPortal expects
 export RP_LAUNCH_UUID=$(uuidgen)
 echo "🚀 ReportPortal Launch UUID: $RP_LAUNCH_UUID"
 ```
 
 4. Set **"Provide build settings from"** to your **test target**
 5. Click **Close**
-6. Run tests (**⌘U**) - coordination happens automatically! 🎉
+6. Run tests (**⌘U**)
 
-## What This Does
+## Benefits of Manual UUID
 
-- **Generates proper RFC 4122 UUID** (required by ReportPortal API)
-- **All test workers inherit** this environment variable from Xcode
-- **Workers coordinate** using the same UUID (409 Conflict handling)
-- **Works for simulators AND real devices** 📱
-- **Critical**: ReportPortal v2 API requires standard UUID format (8-4-4-4-12 hex digits)
+- **Explicit control**: You choose the UUID format and generation strategy
+- **Real device support**: Required for parallel testing across multiple real devices
+- **CI/CD integration**: Integrate with pipeline UUIDs for traceability
+- **Debugging**: Easier to track specific test runs
 
 ## CI/CD Setup
 

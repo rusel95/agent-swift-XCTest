@@ -330,11 +330,11 @@ final class LaunchManagerTests: XCTestCase {
 
     // MARK: - UUID Generation Tests (T010, T016)
 
-    func testGetOrGenerateLaunchUUID_GeneratesUUID() async {
+    func testGetOrCreateLaunchUUID_GeneratesUUID() async {
         // Given: No environment variable set (already cleared by setUp)
 
-        // When: Get or generate UUID
-        let uuid1 = await LaunchManager.shared.getOrGenerateLaunchUUID()
+        // When: Get or create UUID
+        let uuid1 = await LaunchManager.shared.getOrCreateLaunchUUID()
 
         // Then: Should generate RFC 4122 UUID format (8-4-4-4-12 hex characters)
         // Example: 550e8400-e29b-41d4-a716-446655440000
@@ -354,24 +354,24 @@ final class LaunchManagerTests: XCTestCase {
         XCTAssertNotNil(UUID(uuidString: uuid1), "Generated string should be a valid UUID")
     }
 
-    func testGetOrGenerateLaunchUUID_CachesUUID() async {
+    func testGetOrCreateLaunchUUID_CachesUUID() async {
         // Given: No environment variable set
 
         // When: Get UUID twice
-        let uuid1 = await LaunchManager.shared.getOrGenerateLaunchUUID()
-        let uuid2 = await LaunchManager.shared.getOrGenerateLaunchUUID()
+        let uuid1 = await LaunchManager.shared.getOrCreateLaunchUUID()
+        let uuid2 = await LaunchManager.shared.getOrCreateLaunchUUID()
 
         // Then: Should return same UUID (cached)
         XCTAssertEqual(uuid1, uuid2, "UUID should be cached and reused")
     }
 
-    func testGetOrGenerateLaunchUUID_ConcurrentCallsReturnSameUUID() async {
+    func testGetOrCreateLaunchUUID_ConcurrentCallsReturnSameUUID() async {
         // Given: Multiple concurrent calls
 
         // When: Get UUID from multiple tasks
-        async let uuid1 = LaunchManager.shared.getOrGenerateLaunchUUID()
-        async let uuid2 = LaunchManager.shared.getOrGenerateLaunchUUID()
-        async let uuid3 = LaunchManager.shared.getOrGenerateLaunchUUID()
+        async let uuid1 = LaunchManager.shared.getOrCreateLaunchUUID()
+        async let uuid2 = LaunchManager.shared.getOrCreateLaunchUUID()
+        async let uuid3 = LaunchManager.shared.getOrCreateLaunchUUID()
 
         let (id1, id2, id3) = await (uuid1, uuid2, uuid3)
 

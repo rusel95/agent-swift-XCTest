@@ -154,39 +154,78 @@ public final class ReportingService: Sendable {
     }
 
     /// Finish launch in ReportPortal (v2 async API)
-    /// Used for parallel test execution with tolerant finish (multiple workers can call)
+    /// Used for parallel test execution with file-based finish coordination (single finish call)
     /// - Parameters:
     ///   - launchID: Launch ID from LaunchManager
-    ///   - status: Aggregated status from LaunchManager
-    func finalizeLaunchV2(launchID: String, status: TestStatus) async throws {
+    ///   - status: Worker's local status
+    ///   - coordinator: Optional FinishCoordinator for parallel coordination (simulators only)
+    ///   - tracker: Optional WorkerTracker for last-worker detection (simulators only)
+    ///   - uuid: Launch UUID for coordination
+    ///   - workerID: Current worker identifier
+    func finalizeLaunchV2(
+        launchID: String,
+        status: TestStatus,
+        coordinator: FinishCoordinator? = nil,
+        tracker: WorkerTracker? = nil,
+        uuid: String? = nil,
+        workerID: String? = nil
+    ) async throws {
         Logger.shared.info("Attempting to finalize launch: \(launchID) with status: \(status.rawValue)")
 
-        let endPoint = FinishLaunchV2EndPoint(
-            launchID: launchID,
-            status: status
-        )
-
-        do {
-            let _: LaunchFinish = try await httpClientV2.callEndPoint(endPoint)
-
-            // Mark as finalized in LaunchManager
-            await launchManager.markFinalized()
-
-            Logger.shared.info("✅ Launch finalized successfully (v2): \(launchID) with status: \(status.rawValue)")
-        } catch let error as HTTPClientError {
-            // Handle 404/409 - launch already finished by another worker (expected in parallel mode)
-            if case .httpError(let statusCode, _) = error, statusCode == 404 || statusCode == 409 {
-                Logger.shared.info("⚡️ HTTP \(statusCode) - Launch already finished by another worker. This is expected in parallel mode.")
-
-                // Mark as finalized in LaunchManager even though we didn't do the finish
+        // If coordinator is provided, use file-based coordination (simulator mode)
+        if let coordinator = coordinator,
+           let tracker = tracker,
+           let uuid = uuid,
+           let workerID = workerID {
+            
+            // Record this worker's status
+            try await coordinator.recordStatus(uuid: uuid, workerID: workerID, status: status)
+            
+            // Check if we should finish the launch (last worker)
+            let (shouldFinish, aggregatedStatus) = try await coordinator.shouldFinishLaunch(
+                uuid: uuid,
+                workerID: workerID,
+                workerTracker: tracker
+            )
+            
+            guard shouldFinish, let finalStatus = aggregatedStatus else {
+                Logger.shared.info("⚡️ Not last worker - skipping finish API call. Another worker will finish the launch.")
+                
+                // Mark as finalized locally even though we didn't make the API call
                 await launchManager.markFinalized()
-
-                // Don't throw - this is expected and acceptable
                 return
             }
-
-            // Re-throw other HTTP errors
-            throw error
+            
+            // Last worker makes the API call with aggregated status
+            Logger.shared.info("✅ Last worker detected - finishing launch with aggregated status: \(finalStatus.rawValue)")
+            
+            let endPoint = FinishLaunchV2EndPoint(
+                launchID: launchID,
+                status: finalStatus
+            )
+            
+            let _: LaunchFinish = try await httpClientV2.callEndPoint(endPoint)
+            
+            // Mark as finalized in LaunchManager
+            await launchManager.markFinalized()
+            
+            // Cleanup coordination files
+            await coordinator.cleanupStatusFiles(uuid: uuid)
+            
+            Logger.shared.info("✅ Launch finalized successfully (v2): \(launchID) with status: \(finalStatus.rawValue)")
+        } else {
+            // No coordinator - direct API call (backward compatibility or real devices)
+            let endPoint = FinishLaunchV2EndPoint(
+                launchID: launchID,
+                status: status
+            )
+            
+            let _: LaunchFinish = try await httpClientV2.callEndPoint(endPoint)
+            
+            // Mark as finalized in LaunchManager
+            await launchManager.markFinalized()
+            
+            Logger.shared.info("✅ Launch finalized successfully (v2 - direct): \(launchID) with status: \(status.rawValue)")
         }
     }
 

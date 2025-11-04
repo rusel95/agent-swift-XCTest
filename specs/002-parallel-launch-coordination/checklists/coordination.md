@@ -40,19 +40,19 @@
 
 ## Race Condition & Concurrency Requirements
 
-- [ ] CHK016 - Are POSIX file lock requirements specified for exclusive access to coordination files? [Gap, Referenced in tasks but not explicit FR]
-- [ ] CHK017 - Is the behavior defined when multiple workers attempt to create the same suite simultaneously? [Clarity, Implied by file lock but not explicit]
-- [ ] CHK018 - Are requirements defined for handling concurrent worker registration/unregistration? [Gap, Concurrency scenario]
-- [ ] CHK019 - Is the atomic read-modify-write requirement specified for worker tracking file operations? [Gap, Mentioned in tasks T018 but not in FR]
-- [ ] CHK020 - Are lock acquisition timeout requirements quantified to prevent indefinite blocking? [Clarity, Tasks T010 mentions 10s, not in FR]
+- [X] CHK016 - Are POSIX file lock requirements specified for exclusive access to coordination files? [✅ RESOLVED: Added FR-040]
+- [X] CHK017 - Is the behavior defined when multiple workers attempt to create the same suite simultaneously? [✅ RESOLVED: FR-040 specifies POSIX flock with timeout]
+- [X] CHK018 - Are requirements defined for handling concurrent worker registration/unregistration? [✅ RESOLVED: FR-044 atomic operations]
+- [X] CHK019 - Is the atomic read-modify-write requirement specified for worker tracking file operations? [✅ RESOLVED: Added FR-044]
+- [X] CHK020 - Are lock acquisition timeout requirements quantified to prevent indefinite blocking? [✅ RESOLVED: FR-040 specifies 10-second timeout]
 
 ---
 
 ## Data Loss Prevention
 
 - [ ] CHK021 - Are requirements defined to ensure test results are never lost if launch finish fails? [Completeness, Addressed in spec but not explicit FR]
-- [ ] CHK022 - Is the behavior specified when last worker crashes before calling finish API? [Edge Case, Spec Q&A mentions "requires manual cleanup"]
-- [ ] CHK023 - Are requirements defined for partial worker failure (some workers crash, others complete)? [Gap, Exception Flow]
+- [X] CHK022 - Is the behavior specified when last worker crashes before calling finish API? [✅ RESOLVED: Known Limitations section]
+- [X] CHK023 - Are requirements defined for partial worker failure (some workers crash, others complete)? [✅ RESOLVED: Known Limitations section]
 - [ ] CHK024 - Is the cleanup requirement specified for orphaned coordination files after successful finish? [Completeness, Spec §FR-020]
 
 ---

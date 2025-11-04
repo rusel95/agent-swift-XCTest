@@ -176,6 +176,13 @@
   - Use aggregated status from coordinator
   - Cleanup coordination files after successful finish
 
+- [X] T021 Update RPListener.testBundleDidFinish for finish coordination in Sources/RPListener.swift
+  - Add `workerTracker: WorkerTracker?` and `finishCoordinator: FinishCoordinator?` properties
+  - Initialize coordinators in testBundleWillStart (simulators only)
+  - Register worker after launch creation
+  - Pass coordinator, tracker, uuid, workerID to ReportingService.finalizeLaunchV2
+  - Log worker registration/unregistration events
+
 - [ ] T020 Update ReportingService.finishLaunch for coordination in Sources/ReportingService.swift
   - Accept `coordinator: FinishCoordinator?` and `tracker: WorkerTracker?` parameters
   - Remove tolerant 404/409 handling (file-based = single finish)

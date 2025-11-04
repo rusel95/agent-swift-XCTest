@@ -2,8 +2,8 @@
 //  SuiteCoordinator.swift
 //  ReportPortalAgent
 //
-//  Created by agent-swift-XCTest on 2025-11-04.
-//  Copyright © 2025 EPAM Systems. All rights reserved.
+//  Created by Ruslan Popesku on 11/04/25.
+//  Copyright © 2025 ReportPortal. All rights reserved.
 //
 //  File-based suite coordination to prevent duplicate suites across workers
 //
@@ -80,6 +80,7 @@ actor SuiteCoordinator {
                     
                     // Validate suite ID format
                     guard !suiteID.isEmpty, suiteID.count < 200 else {
+                        Logger.shared.error("[ERROR] Invalid suite ID in sync file '\(syncFilePath)': '\(suiteID)'", correlationID: correlationID)
                         print("[\(correlationID)] ⚠️ Invalid suite ID in sync file '\(syncFilePath)': '\(suiteID)'")
                         throw FileCoordinationError.fileOperationFailed(
                             path: syncFilePath,
@@ -93,6 +94,7 @@ actor SuiteCoordinator {
                     return suiteID
                 } catch {
                     // Sync file corrupted, fall back to creating new suite
+                    Logger.shared.error("[ERROR] Corrupted sync file '\(syncFilePath)': \(error.localizedDescription)", correlationID: correlationID)
                     print("[\(correlationID)] ⚠️ Corrupted sync file '\(syncFilePath)': \(error.localizedDescription)")
                 }
             }
@@ -106,6 +108,7 @@ actor SuiteCoordinator {
                 try suiteID.write(toFile: syncFilePath, atomically: true, encoding: .utf8)
                 print("[\(correlationID)] Wrote suite ID to sync file: \(syncFilePath)")
             } catch {
+                Logger.shared.error("[ERROR] Failed to write sync file '\(syncFilePath)': \(error.localizedDescription)", correlationID: correlationID)
                 print("[\(correlationID)] ⚠️ Failed to write sync file '\(syncFilePath)': \(error.localizedDescription)")
                 // Continue anyway, suite was created successfully
             }
@@ -115,6 +118,7 @@ actor SuiteCoordinator {
             
         } catch let error as FileCoordinationError {
             // Lock timeout or acquisition failed, fall back to direct creation
+            Logger.shared.error("[ERROR] File coordination failed for suite '\(name)': \(error)", correlationID: correlationID)
             print("[\(correlationID)] ⚠️ File coordination failed for suite '\(name)': \(error)")
             print("[\(correlationID)] Falling back to direct suite creation (may result in duplicates)")
             

@@ -75,6 +75,58 @@ Or in XCode:
 
 Starting with v4.0, the agent fully supports **parallel test execution**, allowing you to dramatically reduce CI/CD pipeline times. Tests can be executed across multiple simulator instances simultaneously while maintaining proper test hierarchy and reporting in ReportPortal.
 
+### ✨ Zero-Configuration Parallel Testing
+
+**The agent works out-of-the-box with Xcode's parallel testing—no setup required!**
+
+Just enable parallel testing in Xcode and run your tests. The agent automatically:
+- ✅ Creates a **single unified launch** for all parallel workers
+- ✅ Coordinates launch creation and finalization across multiple processes
+- ✅ Handles workers finishing at different times
+- ✅ Works with any number of workers (Xcode determines this dynamically)
+
+**How it works:**
+- Each worker auto-generates a coordinated UUID based on the process group ID (PGID)
+- All workers in the same test run share the same PGID, so they automatically coordinate
+- No environment variables, no pre-action scripts, no manual configuration needed
+
+**Example:** Run 4 parallel workers with zero setup:
+```bash
+xcodebuild test \
+  -scheme YourScheme \
+  -testPlan YourTestPlan \
+  -destination 'platform=iOS Simulator,name=iPhone 16' \
+  -parallel-testing-enabled YES \
+  -maximum-parallel-testing-workers 4
+```
+
+**Result:** One launch in ReportPortal with all test results from all 4 workers.
+
+### Advanced: Custom Launch UUID (Optional)
+
+For advanced use cases (CI/CD, real devices, explicit control), you can optionally set a custom launch UUID:
+
+```bash
+# In Xcode scheme Pre-Action or CI/CD script:
+export RP_LAUNCH_UUID="MyApp_$(date +%Y%m%d_%H%M%S)_$(ps -o pgid= -p $$)"
+
+# Then run tests:
+xcodebuild test -scheme YourScheme -parallel-testing-enabled YES
+```
+
+**Benefits of custom UUID:**
+- Explicit control over launch coordination
+- Works across real devices (which don't support file-based fallback)
+- Enables cross-machine coordination (if UUID shared externally)
+
+**When to use:**
+- ⚠️ **Not needed for 90% of simulator use cases** (auto-generation works perfectly)
+- ✅ Real device parallel testing
+- ✅ CI/CD pipelines with complex requirements
+- ✅ Debugging coordination issues
+
+For detailed setup instructions, see [docs/xcode-pre-action-setup.md](./docs/xcode-pre-action-setup.md).
+
 ### Requirements
 
 - **iOS 15.0+** / **macOS 12.0+** (required for Swift Concurrency)

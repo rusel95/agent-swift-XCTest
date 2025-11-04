@@ -2,8 +2,8 @@
 //  WorkerTracker.swift
 //  ReportPortalAgent
 //
-//  Created by agent-swift-XCTest on 2025-11-04.
-//  Copyright © 2025 EPAM Systems. All rights reserved.
+//  Created by Ruslan Popesku on 11/04/25.
+//  Copyright © 2025 ReportPortal. All rights reserved.
 //
 //  Worker registration and last-worker detection for launch finish coordination
 //

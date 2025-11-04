@@ -2,8 +2,8 @@
 //  FileCoordination.swift
 //  ReportPortalAgent
 //
-//  Created by agent-swift-XCTest on 2025-11-04.
-//  Copyright © 2025 EPAM Systems. All rights reserved.
+//  Created by Ruslan Popesku on 11/04/25.
+//  Copyright © 2025 ReportPortal. All rights reserved.
 //
 //  POSIX file lock coordination for suite and finish synchronization
 //
@@ -42,7 +42,9 @@ actor FileCoordination {
             // Open or create lock file
             let fd = open(path, O_RDWR | O_CREAT, 0o644)
             guard fd >= 0 else {
-                throw FileCoordinationError.lockAcquisitionFailed(path: path, errno: errno)
+                let err = errno
+                Logger.shared.error("[ERROR] Failed to open lock file: \(path), errno: \(err)")
+                throw FileCoordinationError.lockAcquisitionFailed(path: path, errno: err)
             }
             
             // Try to acquire exclusive lock (non-blocking)
@@ -65,10 +67,12 @@ actor FileCoordination {
             }
             
             // Other error
+            Logger.shared.error("[ERROR] Lock acquisition failed for \(path), errno: \(error)")
             throw FileCoordinationError.lockAcquisitionFailed(path: path, errno: error)
         }
         
         // Timeout exceeded
+        Logger.shared.error("[ERROR] Lock timeout for \(path) after \(Date().timeIntervalSince(startTime))s")
         throw FileCoordinationError.lockTimeout(path: path, duration: Date().timeIntervalSince(startTime))
     }
     
@@ -97,6 +101,7 @@ actor FileCoordination {
                 attributes: nil
             )
         } catch {
+            Logger.shared.error("[ERROR] Failed to create directory: \(path), error: \(error.localizedDescription)")
             throw FileCoordinationError.directoryCreationFailed(path: path, error: error)
         }
     }
@@ -111,6 +116,7 @@ actor FileCoordination {
         
         guard let data = try? handle.readToEnd(),
               let content = String(data: data, encoding: .utf8) else {
+            Logger.shared.error("[ERROR] Failed to read file: \(path)")
             throw FileCoordinationError.fileOperationFailed(
                 path: path,
                 operation: "read",
@@ -131,6 +137,7 @@ actor FileCoordination {
         defer { releaseLock(handle) }
         
         guard let data = content.data(using: .utf8) else {
+            Logger.shared.error("[ERROR] Failed to encode string to UTF-8 for file: \(path)")
             throw FileCoordinationError.fileOperationFailed(
                 path: path,
                 operation: "encode",
@@ -144,6 +151,7 @@ actor FileCoordination {
             try handle.write(contentsOf: data)
             try handle.synchronize()
         } catch {
+            Logger.shared.error("[ERROR] Failed to write file: \(path), error: \(error.localizedDescription)")
             throw FileCoordinationError.fileOperationFailed(
                 path: path,
                 operation: "write",
@@ -163,6 +171,7 @@ actor FileCoordination {
         do {
             try fileManager.removeItem(atPath: path)
         } catch {
+            Logger.shared.error("[ERROR] Failed to delete file: \(path), error: \(error.localizedDescription)")
             throw FileCoordinationError.fileOperationFailed(
                 path: path,
                 operation: "delete",

@@ -146,11 +146,13 @@ actor SuiteCoordinator {
                         try fileManager.removeItem(atPath: filePath)
                         print("[\(correlationID)] Cleaned up sync file: \(filePath)")
                     } catch {
+                        Logger.shared.error("[ERROR] Failed to delete sync file '\(filePath)': \(error.localizedDescription)", correlationID: correlationID)
                         print("[\(correlationID)] ⚠️ Failed to delete sync file '\(filePath)': \(error.localizedDescription)")
                     }
                 }
             }
         } catch {
+            Logger.shared.error("[ERROR] Failed to list files in '\(baseDirectory)': \(error.localizedDescription)", correlationID: correlationID)
             print("[\(correlationID)] ⚠️ Failed to list files in '\(baseDirectory)': \(error.localizedDescription)")
         }
     }

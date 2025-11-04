@@ -921,7 +921,7 @@ open class RPListener: NSObject, XCTestObservation {
                 do {
                     if let asyncService = reportingService {
                         // Get launch UUID and worker ID for coordination
-                        let launchUUID = await launchManager.getLaunchUUID()
+                        let launchUUID = await launchManager.getOrGenerateLaunchUUID()
                         
                         // Use finalizeLaunchV2 with file-based finish coordination
                         // Only last worker will make the API call

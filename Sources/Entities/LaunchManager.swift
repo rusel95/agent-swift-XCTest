@@ -101,6 +101,55 @@ actor LaunchManager {
         // For guaranteed single launch coordination, always set RP_LAUNCH_UUID in pre-action script.
         return UUID().uuidString
     }
+    
+    // MARK: - Configuration Validation
+    
+    /// Validate configuration and log warnings for potential issues
+    func validateConfiguration() {
+        // Check if RP_LAUNCH_UUID is set and validate format
+        if let envUUID = ProcessInfo.processInfo.environment["RP_LAUNCH_UUID"],
+           !envUUID.isEmpty {
+            // Validate UUID format (RFC 4122: 8-4-4-4-12 hex digits)
+            let uuidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            let uuidRegex = try? NSRegularExpression(pattern: uuidPattern)
+            let range = NSRange(envUUID.startIndex..., in: envUUID)
+            
+            if uuidRegex?.firstMatch(in: envUUID, range: range) == nil {
+                Logger.shared.warning("[WARNING] RP_LAUNCH_UUID has invalid format: '\(envUUID)'. Expected RFC 4122 UUID format (e.g., 550e8400-e29b-41d4-a716-446655440000)")
+                print("⚠️ [ReportPortal] Invalid RP_LAUNCH_UUID format: '\(envUUID)'")
+            } else {
+                Logger.shared.info("✅ RP_LAUNCH_UUID format valid: \(envUUID)")
+            }
+        } else {
+            Logger.shared.warning("[WARNING] RP_LAUNCH_UUID not set. Auto-generating UUID per worker (may create multiple launches). Set RP_LAUNCH_UUID in pre-action script for guaranteed single launch.")
+            print("⚠️ [ReportPortal] RP_LAUNCH_UUID not set - using auto-generated UUIDs")
+        }
+        
+        // Log platform detection
+        #if targetEnvironment(simulator)
+        Logger.shared.info("✅ Platform: iOS Simulator - Full coordination enabled (launch + suite + finish)")
+        print("📱 [ReportPortal] Running on Simulator - file-based coordination available")
+        
+        // Validate /tmp/reportportal/ directory is writable
+        let coordinationDir = "/tmp/reportportal"
+        let fileManager = FileManager.default
+        
+        if fileManager.fileExists(atPath: coordinationDir) {
+            if fileManager.isWritableFile(atPath: coordinationDir) {
+                Logger.shared.info("✅ Coordination directory writable: \(coordinationDir)")
+            } else {
+                Logger.shared.error("[ERROR] Coordination directory not writable: \(coordinationDir)")
+                print("🚨 [ReportPortal] Cannot write to \(coordinationDir) - coordination may fail")
+            }
+        } else {
+            // Directory doesn't exist yet, will be created on first use
+            Logger.shared.info("Coordination directory will be created: \(coordinationDir)")
+        }
+        #else
+        Logger.shared.info("📱 Platform: Real Device - Launch coordination only (suite/finish coordination disabled)")
+        print("📱 [ReportPortal] Running on Real Device - limited coordination")
+        #endif
+    }
 
     // MARK: - Bundle Lifecycle
 

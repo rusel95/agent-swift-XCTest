@@ -9,26 +9,31 @@
 
 ## ⚠️ Important Platform Scope
 
-**This feature provides parallel test coordination for iOS Simulators ONLY.**
+**This feature provides hybrid coordination: UUID-based for launches (cross-platform) + file-based for suites (simulators).**
 
-| Test Mode | Platform | Local Mac | CI/CD | Coordination | Status |
-|-----------|----------|-----------|-------|--------------|--------|
-| **Sequential** (1 worker) | Simulators | ✅ Works | ✅ Works | No coordination needed | Fully supported |
-| **Sequential** (1 worker) | Real Devices | ✅ Works | ✅ Works | No coordination needed | Fully supported |
-| **Parallel** (2+ workers) | **Simulators** | ✅ Works | ✅ Works | UUID-based (file lock fallback) | **Supported** |
-| **Parallel** (2+ workers) | **Real Devices** | ✅ Works | ✅ Works | UUID-based via env var | **Supported** |
+| Test Mode | Platform | Local Mac | CI/CD | Launch Coordination | Suite Coordination | Status |
+|-----------|----------|-----------|-------|---------------------|-------------------|--------|
+| **Sequential** (1 worker) | Simulators | ✅ Works | ✅ Works | None needed | None needed | Fully supported |
+| **Sequential** (1 worker) | Real Devices | ✅ Works | ✅ Works | None needed | None needed | Fully supported |
+| **Parallel** (2+ workers) | **Simulators** | ✅ Works | ✅ Works | UUID-based | File-based | **Fully supported** |
+| **Parallel** (2+ workers) | **Real Devices** | ✅ Works | ✅ Works | UUID-based via env var | ⚠️ Duplicate suites | **Launch-only** |
 
-**Why simulator-only for parallel?**
-- **Primary coordination**: UUID-based via `RP_LAUNCH_UUID` environment variable (works everywhere)
-- **Fallback coordination**: File-based locking via POSIX flock (simulators only)
-- iOS Simulators share host Mac's `/tmp` directory (file lock fallback works)
-- Real devices have isolated sandboxes with NO shared storage (file lock fallback doesn't work)
-- Real devices CAN use UUID-based coordination via environment variable
+**Hybrid Coordination Strategy:**
+- **Launch coordination**: UUID-based via `RP_LAUNCH_UUID` environment variable (works everywhere - simulators AND real devices)
+- **Suite coordination**: File-based via shared `/tmp` directory (simulators only - real devices have isolated sandboxes)
+- **Launch finish coordination**: File-based worker tracking via shared `/tmp` directory (simulators only - ensures only last worker calls finish API)
+- **Test coordination**: None needed (XCTest distributes tests uniquely, no collisions)
+
+**Platform-Specific Behaviors:**
+- **iOS Simulators (parallel)**: Full coordination - Single launch + single suite per test class (clean hierarchy)
+- **Real Devices (parallel)**: Launch coordination only - Single launch + duplicate suites per test class (acceptable for most use cases)
+- iOS Simulators share host Mac's `/tmp` directory (file-based suite coordination works)
+- Real devices have isolated sandboxes with NO shared storage (file-based suite coordination doesn't work)
 
 **What this means for you:**
-- ✅ **Sequential tests work everywhere** - Simulators, real devices, local, CI/CD
-- ✅ **Parallel tests work on simulators** - UUID coordination (preferred) or file lock (fallback)
-- ✅ **Parallel tests work on real devices** - UUID coordination via `RP_LAUNCH_UUID` environment variable
+- ✅ **Sequential tests work everywhere** - Simulators, real devices, local, CI/CD (no coordination needed)
+- ✅ **Parallel simulator tests** - Full coordination: UUID launch + file-based suites (perfect hierarchy)
+- ✅ **Parallel real device tests** - Launch coordination only: UUID launch + duplicate suites (tests still report correctly)
 - 📝 **Setup for parallel on real devices**: Set `RP_LAUNCH_UUID` in Xcode scheme pre-action or CI/CD script
 
 ---
@@ -65,22 +70,67 @@
     }
     response.setId(request.getUuid()); // Returns YOUR UUID
     ```
-  - **Recommended Strategy**: UUID-based coordination with tolerant finish:
+  - **Recommended Strategy**: UUID-based launch coordination with file-based finish:
     1. **Pre-create shared UUID** via environment variable `RP_LAUNCH_UUID` (set in Xcode pre-action or CI/CD)
     2. **All workers use same UUID** when creating launch (first succeeds, others get 409 Conflict)
     3. **Workers handle 409 gracefully** (launch already exists → use it)
     4. **All workers report tests** to shared UUID throughout execution
-    5. **Tolerant finish**: All workers call finish, accept 404/409 as success (launch already finished)
+    5. **File-based finish**: Last worker detection via worker tracking file, only last worker calls finish API (matches Android agent behavior)
   - **Benefits**:
-    - **Zero coordination overhead**: No file locks, no polling, no sync files
-    - **Works cross-platform**: Simulators AND real devices (shared UUID via env var)
-    - **Race condition free**: UUID pre-created before workers start
-    - **Multiple finish calls safe**: HTTP 404/409 indicate already finished (not errors)
+    - **Zero launch coordination overhead**: No file locks for launch creation, no polling, no sync files
+    - **Works cross-platform for launches**: Simulators AND real devices (shared UUID via env var)
+    - **Race condition free for launch creation**: UUID pre-created before workers start
+    - **Single finish API call**: File-based last worker detection ensures finish called exactly once (matches Android agent)
     - **Backward compatible**: Falls back to file lock if no UUID provided
   - **Implementation Priority**:
-    - **Priority 1 (UUID-based)**: Check `RP_LAUNCH_UUID` env var → create launch with custom UUID → tolerant finish
-    - **Priority 2 (File lock fallback)**: If no env var, use file lock coordination (simulators only)
-    - **Priority 3 (Degraded)**: If file lock fails, create separate launch with warning
+    - **Priority 1 (UUID-based launch)**: Check `RP_LAUNCH_UUID` env var → create launch with custom UUID → file-based finish coordination
+    - **Priority 2 (File-based suites)**: Use file lock + sync files for suite coordination (simulators only)
+    - **Priority 3 (Degraded)**: If file operations fail, create separate launches/suites with warning
+
+### Session 2025-11-04
+
+- Q: Should coordination apply to all hierarchy levels (Launch + Suites + Tests) OR selectively based on scalability needs? → A: Hybrid approach - UUID for Launches, File-based for Suites
+  - **Rationale**: Different hierarchy levels have different coordination requirements:
+    - **Launch level (1 per run)**: UUID-based coordination works perfectly. Zero overhead, cross-platform compatible, works on real devices
+    - **Suite level (10-100 per run)**: File-based coordination scales better. Each suite has its own sync file, no API overhead for 409 conflicts on every suite creation
+    - **Test level (1000+ per run)**: No coordination needed. XCTest distributes tests uniquely across workers, no collisions
+  - **Implementation**: Hybrid coordination strategy:
+    1. **Launch Coordination**: Use UUID-based approach (existing implementation) - `RP_LAUNCH_UUID` env var or auto-generate, all workers attempt creation, 409 Conflict = success
+    2. **Suite Coordination**: Use file-based approach (NEW) - First worker creates suite, writes suite ID to `/tmp/reportportal/suite_{name}_{sessionID}.sync`, other workers read from file
+    3. **Launch Finish Coordination**: Use file-based approach (NEW) - Last worker detection via worker count tracking, only last worker calls finish API
+    4. **Test Coordination**: None needed - Tests are unique per worker, no duplicate creation
+  - **Benefits of Hybrid Approach**:
+    - **Scalability**: File-based suite coordination scales to 100+ test classes without API overhead
+    - **Clean hierarchy**: No duplicate suites in ReportPortal (single `LoginTests` suite instead of 4 duplicates from 4 workers)
+    - **Cross-platform launch**: UUID launch coordination still works on real devices
+    - **Coordinated finish**: File-based worker tracking ensures only last worker calls finish API (matches Android agent behavior)
+    - **Best of both worlds**: UUID for low-frequency high-value coordination, file-based for high-frequency suite coordination and finish synchronization
+  - **Scalability Analysis**:
+    - UUID approach doesn't scale to 100 suites (100 API calls + 409 handling per worker = overhead)
+    - File-based approach DOES scale (each suite has independent sync file, fast filesystem lookup)
+    - Suite collisions less frequent than launch collisions (XCTest distributes test classes across workers)
+    - Finish coordination MUST be file-based (tolerant 404/409 approach causes multiple finish API calls, file-based ensures single finish call like Android agent)
+
+- Q: Should launch finish be coordinated to ensure only one worker calls the finish API? → A: Yes, use file-based "last worker" detection (matching Android implementation)
+  - **Rationale**: Multiple workers calling finish simultaneously creates race conditions and potential data inconsistency:
+    - All workers call finish with their local aggregated status → race condition on which status wins
+    - Multiple finish API calls = unnecessary load on ReportPortal server
+    - 404/409 tolerant approach still creates noise in logs and potential edge cases
+  - **Android/Java Implementation Pattern**: File-based "last worker" detection using reference counting:
+    1. Workers register themselves in shared file (increment counter)
+    2. Workers mark completion in shared file (decrement counter)
+    3. Last worker (counter = 0) obtains exclusive lock and calls finish API
+    4. Other workers skip finish call entirely
+  - **Benefits of File-Based Finish Coordination**:
+    - **Single finish call**: Only one worker calls ReportPortal finish API (clean, deterministic)
+    - **Correct status aggregation**: Last worker has visibility into all worker statuses before finishing
+    - **No race conditions**: File lock ensures exclusive access to finish logic
+    - **Consistent with Android**: Matches proven implementation pattern from agent-java-junit5
+  - **Implementation**:
+    1. Worker registration: Each worker writes entry to `/tmp/reportportal/launch_{uuid}_workers.txt` on start
+    2. Worker completion: Each worker removes entry from file on finish
+    3. Last worker detection: Worker checks if file is empty after removing self
+    4. Exclusive finish: Last worker obtains lock, aggregates status, calls finish API once
 
 ---
 
@@ -190,18 +240,20 @@ As a test developer, when coordination fails due to system limitations (network 
 
 ### Edge Cases
 
-- What happens when a worker crashes mid-execution? (Other workers continue, call finish with tolerant handling)
-- What happens when Xcode is force-quit during test execution? (Launch remains open, can be manually closed or auto-timeout)
-- What happens when workers start with significant time delays? (All use same UUID, late workers get 409 Conflict and proceed)
-- What happens when running parallel tests on **real devices**? (Works with `RP_LAUNCH_UUID` coordination, no file locks needed)
+- What happens when a worker crashes mid-execution? (Other workers continue, last surviving worker calls finish with file-based coordination)
+- What happens when Xcode is force-quit during test execution? (Worker tracking file may have stale entries, launch remains open, can be manually closed or auto-timeout)
+- What happens when workers start with significant time delays? (All use same UUID, late workers get 409 Conflict and proceed, register in worker tracking file)
+- What happens when running parallel tests on **real devices**? (UUID launch coordination works, suite coordination creates duplicates - acceptable)
 - What happens when running sequential tests on **real devices**? (Works perfectly - single device, no coordination needed)
 - What happens when network connectivity to ReportPortal is intermittent? (Retries with exponential backoff, degrades to separate launches if fails)
-- What happens when two separate test runs start simultaneously? (Each run has unique UUID via timestamp+PGID, separate launches)
-- What happens when worker count exceeds expected maximum? (UUID approach scales to any worker count)
-- What happens when `RP_LAUNCH_UUID` not provided? (System generates UUID or falls back to file lock on simulators)
-- What happens when all workers call finish simultaneously? (First succeeds with 200, others get 404/409 - all acceptable)
-- What happens when 409 Conflict response has no Launch ID? (Use the custom UUID as Launch ID)
-- What happens when finish is called but launch doesn't exist? (404 response treated as success - already finished or never created)
+- What happens when two separate test runs start simultaneously? (Each run has unique UUID via timestamp+PGID, separate launches, isolated coordination files)
+- What happens when worker count exceeds expected maximum? (Hybrid approach scales: UUID for 1 launch, file-based for N suites, file-based tracking for M workers)
+- What happens when `RP_LAUNCH_UUID` not provided? (System auto-generates UUID using `UUID().uuidString`)
+- What happens when a suite sync file is corrupted? (Worker retries, falls back to creating duplicate suite with warning)
+- What happens when worker tracking file is corrupted? (Multiple workers may call finish, first succeeds, file lock prevents race condition)
+- What happens when last worker crashes before calling finish? (Launch remains open, requires manual cleanup or timeout)
+- What happens when multiple test suites have the same name? (Session ID in filename prevents collision across test runs)
+- What happens when `/tmp` directory is not writable? (Coordination fails, workers create separate launches/suites with error logging)
 
 ## Requirements *(mandatory)*
 
@@ -227,23 +279,27 @@ As a test developer, when coordination fails due to system limitations (network 
 - **FR-016**: System MUST handle 409 Conflict responses when multiple workers create launch with same UUID (indicates launch already created by another worker)
 - **FR-017**: Workers MUST be able to report test results continuously throughout execution without blocking coordination
 - **FR-018**: System MUST prevent race conditions when multiple workers attempt to create Launch simultaneously by using custom UUID (first creation succeeds, others get 409 Conflict)
-- **FR-019**: System MUST prevent premature Launch finalization using tolerant finish logic (all workers call finish, first succeeds, others get 404/409 which is acceptable)
-- **FR-020**: System MUST clean up coordination resources after Launch finalization (lock file and sync file for file-based fallback only)
+- **FR-019**: System MUST use file-based "last worker" detection for launch finish coordination (only last worker calls finish API once)
+- **FR-020**: System MUST clean up coordination resources after Launch finalization (worker tracking files, suite sync files, finish lock files)
 - **FR-021**: System MUST detect parallel execution mode and use appropriate API: v2 async API for parallel runs (launches, logs) for non-blocking operations, v1 sync API for sequential runs for simplicity and backward compatibility
 - **FR-022**: System MUST detect parallel execution mode by checking for multiple active bundles in same process group (via PGID or RP_SESSION_ID)
-- **FR-023**: For UUID-based coordination: All workers MUST call `POST /v2/{projectName}/launch` with same custom UUID, handling 409 Conflict as "launch already exists"
-- **FR-024**: For UUID-based coordination: Workers MUST extract Launch ID from successful creation response OR from 409 error response body
-- **FR-025**: For file-based fallback: Primary worker MUST obtain POSIX flock, create launch, write UUID to sync file, secondary workers poll sync file
-- **FR-026**: For parallel runs: All workers MUST call `PUT /v2/{projectName}/launch/{launchId}/finish` with aggregated status, treating 404/409 as success (already finished)
-- **FR-027**: For SEQUENTIAL runs (single worker, any platform): System MAY continue using existing v1 API (`POST /v1/{projectName}/launch`, `PUT /v1/{projectName}/launch/{launchId}/finish`) without coordination overhead
-- **FR-028**: System MUST use v1 force finish API (`PUT /v1/{projectName}/launch/{launchId}/stop`) for cleanup when worker crashes or coordination fails (if needed)
-- **FR-029**: For file-based fallback: System MUST use session-based file naming with PGID for coordination files to isolate different test runs
-- **FR-030**: System MUST track active bundle count in LaunchManager to determine aggregated status across all workers
-- **FR-031**: Launch MUST aggregate status across all workers following severity hierarchy: FAILED > STOPPED > PASSED
-- **FR-032**: For PARALLEL/SIMULATOR runs: System MUST use `POST /v2/{projectName}/log` for batch log creation to ensure non-blocking async log reporting
-- **FR-033**: For PARALLEL/SIMULATOR runs: System MUST use `POST /v2/{projectName}/log/entry` for single log entry creation when immediate log reporting is needed
-- **FR-034**: For SEQUENTIAL runs (single worker, any platform): System MAY continue using v1 log API (`POST /v1/{projectName}/log`, `POST /v1/{projectName}/log/entry`) without requiring v2 async
-- **FR-035**: System MAY use v1 log API (`GET /v1/{projectName}/log`) for reading/querying logs in both parallel and sequential modes
+- **FR-023**: For launch creation: All workers MUST call `POST /v2/{projectName}/launch` with same custom UUID, handling 409 Conflict as "launch already exists"
+- **FR-024**: For launch creation: Workers MUST extract Launch ID from successful creation response OR from 409 error response body
+- **FR-025**: For suite coordination: System MUST use file-based sync files (one per suite) to prevent duplicate suite creation across workers
+- **FR-026**: For suite coordination: First worker creating a suite MUST write suite ID to `/tmp/reportportal/suite_{name}_{sessionID}.sync`, other workers read from file
+- **FR-027**: For suite coordination: Workers MUST poll suite sync file with 100ms intervals and 5-second timeout if suite not yet created
+- **FR-028**: For launch finish: Workers MUST register themselves in `/tmp/reportportal/launch_{uuid}_workers.txt` on start
+- **FR-029**: For launch finish: Workers MUST remove themselves from worker tracking file on completion
+- **FR-030**: For launch finish: Last worker (worker count = 0 after self-removal) MUST obtain exclusive lock and call finish API
+- **FR-031**: For launch finish: Last worker MUST aggregate status from LaunchManager before calling finish (FAILED > STOPPED > PASSED hierarchy)
+- **FR-032**: For launch finish: Non-last workers MUST skip finish API call entirely (no 404/409 tolerant approach needed)
+- **FR-033**: System MUST use session-based file naming with PGID or launch UUID for coordination files to isolate different test runs
+- **FR-034**: For SEQUENTIAL runs (single worker, any platform): System MAY continue using existing v1 API (`POST /v1/{projectName}/launch`, `PUT /v1/{projectName}/launch/{launchId}/finish`) without coordination overhead
+- **FR-035**: System MUST use v1 force finish API (`PUT /v1/{projectName}/launch/{launchId}/stop`) for cleanup when worker crashes or coordination fails (if needed)
+- **FR-036**: System MUST track active bundle count in LaunchManager to determine aggregated status across all workers
+- **FR-037**: For PARALLEL/SIMULATOR runs: System MUST use `POST /v2/{projectName}/log` for batch log creation to ensure non-blocking async log reporting
+- **FR-038**: For PARALLEL/SIMULATOR runs: System MUST use `POST /v2/{projectName}/log/entry` for single log entry creation when immediate log reporting is needed
+- **FR-039**: System MAY use v1 log API (`GET /v1/{projectName}/log`) for reading/querying logs in both parallel and sequential modes
 
 ### Key Entities
 
@@ -275,106 +331,118 @@ As a test developer, when coordination fails due to system limitations (network 
 
 ## Coordination Flow *(informational)*
 
-**Note**: This coordination flow applies ONLY to parallel test runs with multiple workers. Sequential runs (single worker) bypass coordination and use existing v1 API for simplicity.
+**Note**: This coordination flow applies ONLY to parallel test runs with multiple workers on simulators. Sequential runs (single worker) bypass coordination and use existing v1 API for simplicity.
 
-### High-Level Flow Using UUID-Based Coordination (Parallel Runs)
+### High-Level Hybrid Coordination Flow (Parallel Simulator Runs)
 
-**Priority 1: UUID-Based Coordination (Preferred)**
+**Hybrid Strategy: UUID for Launch Creation + File-based for Suite Coordination + File-based for Launch Finish**
 
-**Phase 1: UUID Generation (Before Workers Start)**
-1. Xcode Pre-Action or CI/CD script generates unique UUID:
-   ```bash
-   export RP_LAUNCH_UUID="MyApp_$(date +%Y%m%d_%H%M%S)_$(ps -o pgid= -p $$)"
+**Phase 1: Worker Registration & Launch Creation**
+
+1. **Worker Registration** (All workers, on start):
+   ```swift
+   // Each worker registers in worker tracking file
+   let workerFile = "/tmp/reportportal/launch_\(launchUUID)_workers.txt"
+   appendWorkerID(workerID, to: workerFile) // Thread-safe append
    ```
-2. OR: First worker generates UUID if not provided: `{launchName}_{timestamp}_{PGID}`
-3. All workers inherit `RP_LAUNCH_UUID` environment variable
 
-**Phase 2: Launch Creation (All Workers Attempt)**
-1. **All Workers** (simultaneously or with delays):
-   - Read `RP_LAUNCH_UUID` from environment
-   - Call `POST /v2/{projectName}/launch` with `uuid: RP_LAUNCH_UUID`
-   - **First worker**: Gets 200 OK with Launch ID
-   - **Other workers**: Get 409 Conflict (launch already exists)
-   - Both extract Launch ID from response and proceed
+2. **Launch UUID Generation**:
+   - Check `RP_LAUNCH_UUID` environment variable
+   - If not set: Auto-generate using `UUID().uuidString`
+   - All workers use same UUID (via env var or PGID-based coordination)
 
-2. **Handling 409 Conflict**:
+3. **Launch Creation** (All workers attempt, UUID-based):
    ```swift
    do {
-       let response = try await httpClient.post("/v2/\(project)/launch", body: [
-           "uuid": launchUUID,
-           "name": launchName,
-           "mode": "DEFAULT"
-       ])
-       launchID = response.id
-   } catch let error as HTTPError where error.statusCode == 409 {
-       // Launch already created by another worker - extract ID from error
-       launchID = error.responseBody?.id ?? launchUUID
-       logger.info("Using existing launch created by another worker")
+       let launchID = try await reportingService.startLaunch(uuid: launchUUID, ...)
+       // First worker: Gets 200 OK
+   } catch HTTPError.conflict(409, let body) {
+       // Other workers: Get 409 Conflict - extract launch ID from response
+       launchID = body.id ?? launchUUID
+   }
+   ```
+
+**Phase 2: Suite Coordination (File-based)**
+
+For each test suite (e.g., `LoginTests`, `CheckoutTests`):
+
+1. **Check for existing suite** (File-based lookup):
+   ```swift
+   let suiteFile = "/tmp/reportportal/suite_\(suiteName)_\(sessionID).sync"
+   if let existingSuiteID = readSuiteID(from: suiteFile) {
+       return existingSuiteID // Suite already created by another worker
+   }
+   ```
+
+2. **Create new suite** (First worker for this suite):
+   ```swift
+   // Obtain file lock
+   let lockFD = open(suiteFile + ".lock", O_CREAT | O_EXCL)
+   if lockFD >= 0 {
+       // This worker is first - create suite
+       let suiteID = try await reportingService.startSuite(name: suiteName, launchID: launchID)
+       writeSuiteID(suiteID, to: suiteFile)
+       close(lockFD)
+       return suiteID
+   } else {
+       // Another worker is creating - poll for result
+       return await pollSuiteID(from: suiteFile, timeout: 5)
    }
    ```
 
 **Phase 3: Test Execution (All Workers in Parallel)**
-- All workers execute their assigned tests
-- All workers report test results to the SAME Launch UUID
-- Test items (suites/tests) created via standard item API
-- Logs reported via `POST /v2/{projectName}/log` (batch) or `POST /v2/{projectName}/log/entry` (single)
-- All v2 async APIs used for non-blocking operation
 
-**Phase 4: Launch Finalization (All Workers Call Finish)**
-1. Each worker completes its tests
-2. Each worker updates aggregated status in LaunchManager
-3. **All Workers** call finish (no coordination needed):
+- Each worker executes its assigned tests
+- All workers report to SAME Launch (via UUID)
+- All workers report to SAME Suite per test class (via file-based coordination)
+- Tests are unique per worker (no coordination needed)
+- Logs reported via `POST /v2/{projectName}/log`
+
+**Phase 4: Launch Finalization (File-based "Last Worker" Detection)**
+
+1. **Worker Completion** (Each worker, on finish):
    ```swift
-   do {
-       try await httpClient.put("/v2/\(project)/launch/\(launchID)/finish", body: [
-           "status": aggregatedStatus
-       ])
-       logger.info("Successfully finished launch")
-   } catch let error as HTTPError where error.statusCode == 404 || error.statusCode == 409 {
-       // Launch already finished by another worker - this is OK
-       logger.info("Launch already finished by another worker")
+   // Remove self from worker tracking file
+   let workerFile = "/tmp/reportportal/launch_\(launchUUID)_workers.txt"
+   removeWorkerID(workerID, from: workerFile)
+   
+   // Check if last worker
+   let remainingWorkers = countWorkers(in: workerFile)
+   if remainingWorkers == 0 {
+       // This is the LAST worker - call finish API
+       isLastWorker = true
    }
    ```
-4. **First worker to finish**: Gets 200 OK (launch closed)
-5. **Other workers**: Get 404 Not Found or 409 Conflict (already finished) - treated as success
 
-**Result**: Single unified Launch in ReportPortal with all test results from all workers
+2. **Last Worker Finish** (Only one worker executes this):
+   ```swift
+   if isLastWorker {
+       // Obtain exclusive lock
+       let finishLockFD = flock("/tmp/reportportal/launch_\(launchUUID)_finish.lock")
+       
+       // Aggregate status from all workers
+       let finalStatus = aggregateStatus() // FAILED > STOPPED > PASSED
+       
+       // Call finish API once
+       try await reportingService.finishLaunch(launchID: launchID, status: finalStatus)
+       
+       // Cleanup coordination files
+       cleanupCoordinationFiles(launchUUID)
+   }
+   ```
 
-**Key Benefits**: 
-- Zero coordination overhead (no file locks, no polling)
-- Works on simulators AND real devices
-- Race condition free (UUID pre-created)
-- Multiple finish calls safe (tolerant error handling)
+**Result**: 
+- ✅ Single Launch in ReportPortal
+- ✅ Single Suite per test class (no duplicates)
+- ✅ All tests reported correctly
+- ✅ Launch finished exactly once by last worker
+- ✅ Clean coordination file cleanup
 
----
-
-**Priority 2: File-Based Fallback (Simulators Only)**
-
-If `RP_LAUNCH_UUID` not provided, fall back to file-based coordination:
-
-**Phase 1: Worker Initialization (Parallel)**
-1. Each worker starts independently (Worker 1, 2, 3, 4, 5)
-2. Each worker generates session ID (based on PGID - Process Group ID)
-3. Workers attempt to obtain lock on coordination file
-
-**Phase 2: Launch Creation (Primary Worker Only)**
-1. **Primary Worker** (first to obtain lock):
-   - Obtains exclusive POSIX flock on `/tmp/reportportal_coordination/launch_{name}_{session}.lock`
-   - Generates Launch UUID: `{launchName}_{timestamp}_{PGID}`
-   - Calls `POST /v2/{projectName}/launch` with custom UUID
-   - Receives Launch ID from ReportPortal
-   - Writes Launch UUID to sync file: `/tmp/reportportal_coordination/launch_{name}_{session}.sync`
-   - Releases lock
-   - Starts executing tests, reporting to the Launch
-
-2. **Secondary Workers** (failed to obtain lock):
-   - Poll sync file `/tmp/reportportal_coordination/launch_{name}_{session}.sync` 
-   - Read shared Launch UUID from sync file (typically within 100-500ms)
-   - Start executing tests, reporting to the SAME Launch
-
-**Phase 3 & 4**: Same as UUID-based coordination (test execution + tolerant finish)
-
-**Result**: Single unified Launch in ReportPortal with all test results from all workers
+**Key Benefits of Hybrid Approach**:
+- **Launch**: UUID-based (1 per run) - cross-platform, zero overhead
+- **Suites**: File-based (10-100 per run) - scales well, no API overhead
+- **Finish**: File-based (1 per run) - single finish call, correct status aggregation
+- **Clean hierarchy**: No duplicate launches or suites in ReportPortal
 
 ### Error Handling Flow
 
@@ -422,18 +490,17 @@ If `RP_LAUNCH_UUID` not provided, fall back to file-based coordination:
 
 ### In Scope
 
-**Parallel Coordination (All Platforms with UUID):**
-- ✅ UUID-based coordination via `RP_LAUNCH_UUID` environment variable (works everywhere)
-- ✅ Coordinating Launch creation across multiple parallel workers via shared UUID
-- ✅ Zero-configuration coordination when UUID pre-created in Xcode pre-action
-- ✅ Tolerant finish handling (all workers call finish, accept 404/409 as success)
-- ✅ iOS Simulator support (local Mac and CI/CD)
-- ✅ iOS Real Device support (local Mac and CI/CD with UUID coordination)
+**Parallel Coordination (Hybrid Approach):**
+- ✅ UUID-based launch coordination via `RP_LAUNCH_UUID` environment variable (works everywhere)
+- ✅ File-based suite coordination via shared `/tmp` directory (simulators only - prevents duplicate suites)
+- ✅ File-based finish coordination via worker tracking (simulators only - ensures single finish API call)
+- ✅ Zero-configuration coordination when UUID auto-generated (simulators)
+- ✅ iOS Simulator support (local Mac and CI/CD) - full coordination (launch + suites + finish)
+- ✅ iOS Real Device support (local Mac and CI/CD) - launch coordination only (UUID-based)
 - ✅ Coordination for 1-20 workers (simulators or real devices)
 - ✅ Handling workers with variable test counts and finish times
 - ✅ Graceful handling of worker crashes
-- ✅ File-based fallback coordination using host's `/tmp` directory (simulators only)
-- ✅ POSIX flock for exclusive lock acquisition in fallback mode (simulators)
+- ✅ POSIX flock for exclusive lock acquisition (simulators - suite creation, finish coordination)
 
 **Sequential Mode (All Platforms):**
 - ✅ Single worker execution on iOS Simulators (no coordination needed)

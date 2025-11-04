@@ -302,6 +302,9 @@ As a test developer, when coordination fails due to system limitations (network 
 - **FR-037**: For PARALLEL/SIMULATOR runs: System MUST use `POST /v2/{projectName}/log` for batch log creation to ensure non-blocking async log reporting
 - **FR-038**: For PARALLEL/SIMULATOR runs: System MUST use `POST /v2/{projectName}/log/entry` for single log entry creation when immediate log reporting is needed
 - **FR-039**: System MAY use v1 log API (`GET /v1/{projectName}/log`) for reading/querying logs in both parallel and sequential modes
+- **FR-040**: For file-based coordination (simulators only): System MUST use POSIX flock() for exclusive access to coordination files (suite sync files, worker tracking files, finish lock files) with 10-second timeout and exponential backoff retry (100ms, 200ms, 400ms, 800ms, 1600ms intervals)
+- **FR-044**: For worker tracking: System MUST perform atomic read-modify-write operations on worker tracking file to prevent race conditions during concurrent worker registration/unregistration (acquire lock → read count → modify count → write count → release lock as single atomic operation)
+- **FR-047**: For suite coordination: System MUST handle corrupted or invalid sync files gracefully by falling back to direct suite creation (may result in duplicate suites). Worker MUST log warning about coordination failure with sync file path for debugging
 
 ### Key Entities
 
@@ -309,6 +312,27 @@ As a test developer, when coordination fails due to system limitations (network 
 - **Worker**: Represents a single test process/simulator executing a subset of tests. Has unique identifier, completion status, and reports to a shared Launch.
 - **Coordination Session**: Represents the coordination state for a test run. Tracks Launch ID, participating workers, completion status, and synchronization metadata.
 - **Test Result**: Individual test outcome reported by a worker. Contains test name, status, timestamps, and belongs to a Launch.
+
+### Non-Functional Requirements
+
+- **NFR-001**: Performance: Launch creation with UUID coordination MUST complete within 2 seconds per worker
+- **NFR-002**: Performance: Suite sync file lookup MUST complete within 100ms per suite
+- **NFR-003**: Scalability: System MUST maintain coordination correctness (single launch, deduplicated suites, single finish) regardless of test suite count or worker count within documented limits (1-20 workers, 1-100 suites)
+- **NFR-004**: Reliability: File-based coordination MUST handle lock contention gracefully with timeout and retry mechanisms
+- **NFR-005**: Observability: System MUST log all coordination events (UUID source, lock acquisition, worker registration, last-worker detection) with correlation IDs for debugging
+- **NFR-006**: Maintainability: Coordination code MUST use Swift Concurrency (async/await, Actor model) for thread safety without manual locks
+
+## Known Limitations
+
+The following behaviors are known limitations of the current design and are NOT considered defects:
+
+- **Worker crashes before finish**: If the last worker crashes before calling finish API, the Launch will remain open indefinitely with partial test results preserved. Manual cleanup required via ReportPortal UI or force-finish API (`PUT /v1/{projectName}/launch/{launchId}/stop`). Future enhancement: timeout-based auto-finish.
+  
+- **Stale worker tracking entries**: If a non-last worker crashes before removing itself from the worker tracking file, the file contains a stale entry. Other workers continue normally, but the orphaned launch may require external cleanup if the last worker also crashes.
+
+- **Real device suite duplication**: Parallel tests on real devices create duplicate suites per test class (one per worker) because file-based coordination requires shared `/tmp` which real devices don't have. This is acceptable as tests still report correctly to a single launch via UUID coordination.
+
+- **No automatic timeout**: There is no automatic timeout for incomplete launches. If all workers crash or coordination deadlocks, manual intervention is required.
 
 ## Success Criteria *(mandatory)*
 

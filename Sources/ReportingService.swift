@@ -192,12 +192,34 @@ public final class ReportingService: Sendable {
 
     // MARK: - Suite Management
 
-    /// Create suite item in ReportPortal
+    /// Create suite item in ReportPortal with optional coordination
     /// - Parameters:
     ///   - operation: SuiteOperation with metadata
     ///   - launchID: Parent launch ID
+    ///   - coordinator: Optional SuiteCoordinator for file-based deduplication
     /// - Returns: Suite item ID (UUID string)
-    func startSuite(operation: SuiteOperation, launchID: String) async throws -> String {
+    func startSuite(operation: SuiteOperation, launchID: String, coordinator: SuiteCoordinator? = nil) async throws -> String {
+        // If coordinator provided, use file-based coordination
+        if let coordinator = coordinator {
+            Logger.shared.debug("Using suite coordinator for '\(operation.suiteName)'", correlationID: operation.correlationID)
+            
+            return try await coordinator.getOrCreateSuite(
+                name: operation.suiteName,
+                launchID: launchID
+            ) {
+                // This closure is called only if suite doesn't exist yet
+                Logger.shared.info("Creating suite via API (first worker): '\(operation.suiteName)'", correlationID: operation.correlationID)
+                return try await self.createSuiteDirectly(operation: operation, launchID: launchID)
+            }
+        }
+        
+        // No coordinator, create suite directly (real devices or backward compat)
+        Logger.shared.debug("Creating suite directly (no coordination): '\(operation.suiteName)'", correlationID: operation.correlationID)
+        return try await createSuiteDirectly(operation: operation, launchID: launchID)
+    }
+    
+    /// Create suite via ReportPortal API (internal helper)
+    private func createSuiteDirectly(operation: SuiteOperation, launchID: String) async throws -> String {
         let endPoint: StartItemEndPoint
 
         if let rootSuiteID = operation.rootSuiteID {

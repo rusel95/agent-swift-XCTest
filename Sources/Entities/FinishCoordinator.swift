@@ -164,6 +164,7 @@ actor FinishCoordinator {
                 try FileManager.default.removeItem(atPath: filePath)
                 print("[\(correlationID)] Cleaned up finish coordination file: \(filePath)")
             } catch {
+                Logger.shared.error("[ERROR] Failed to delete '\(filePath)': \(error.localizedDescription)", correlationID: correlationID)
                 print("[\(correlationID)] ⚠️ Failed to delete '\(filePath)': \(error.localizedDescription)")
             }
         }

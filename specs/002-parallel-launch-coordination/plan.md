@@ -115,15 +115,15 @@ docs/
 
 > **No constitution violations - this section documents simplification decisions**
 
-| Decision | Simplification Achieved | Complexity Removed |
-|----------|------------------------|-------------------|
-| **Remove file locks** | No POSIX flock, no file I/O, no sync files | LaunchCoordinator (150+ lines), LaunchIdLock (100+ lines), file polling logic |
-| **UUID-based coordination** | ReportPortal API handles conflicts natively | Custom primary/secondary worker detection, lock acquisition retries |
-| **Tolerant finish** | All workers call finish, API handles duplicates | "Last worker" detection, bundle reference counting for finish timing |
-| **Environment variable only** | Single source of truth for UUID | Sync file creation, polling, timeout logic |
-| **Cross-platform by default** | Works on simulators + real devices | No platform-specific coordination paths |
+| Decision | Simplification vs Old Approach | New Hybrid Approach |
+|----------|-------------------------------|---------------------|
+| **Launch coordination** | Removed LaunchCoordinator (150+ lines), LaunchIdLock (100+ lines), file polling | UUID-based: Environment variable + ReportPortal 409 handling |
+| **Suite coordination** | Each worker creates duplicate suites (N duplicates) | File-based: First worker creates, writes to sync file, others read (1 suite per class) |
+| **Finish coordination** | Tolerant finish (all workers call finish, 404/409 spam) | File-based: Last worker detection via worker tracking, single finish API call |
+| **Worker tracking** | No tracking, all workers call finish | File-based registration/removal, last worker calls finish |
+| **Cross-platform** | File locks only work on simulators | UUID launch works everywhere, file-based suite/finish for simulators only |
 
-**Net Result**: ~300 lines of coordination code removed, architecture simplified from 4 coordination classes to 1.
+**Net Result**: Launch coordination simplified (~300 lines removed). Suite + finish coordination added back (~200 lines) but properly scaled. Net simplification: ~100 lines, better architecture.
 
 ---
 

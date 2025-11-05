@@ -95,36 +95,29 @@ public final class ReportingService: Sendable {
 
         do {
             let result: LaunchV2Response = try await httpClientV2.callEndPoint(endPoint)
-            print("✅ [ReportPortal] Launch created successfully - ID: \(result.id)")
-            Logger.shared.info("✅ Launch created successfully (v2) - Launch ID: \(result.id), UUID: \(uuid ?? "server-generated")")
+            print("✅ [SYNC] [LAUNCH] Created - ID: \(result.id)")
             return result.id
         } catch let error as HTTPClientError {
             // Handle 409 Conflict - launch already exists (expected in parallel mode)
             if case .httpError(let statusCode, let body) = error, statusCode == 409 {
-                print("⚡️ [ReportPortal] 409 Conflict - Worker joining existing launch")
-                Logger.shared.info("⚡️ 409 Conflict - Launch already exists (UUID: \(uuid ?? "none")). Worker joining existing launch...")
+                print("⚡️ [SYNC] [LAUNCH] 409 Conflict - joining existing launch")
 
                 // Try to extract launch ID from error response
                 if let body = body, let data = body.data(using: .utf8) {
-                    Logger.shared.debug("409 Response body: \(body)")
                     if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let launchID = json["id"] as? String {
-                        print("✅ [ReportPortal] Extracted launch ID from 409 response: \(launchID)")
-                        Logger.shared.info("✅ Extracted launch ID from 409 response: \(launchID)")
+                        print("✅ [SYNC] [LAUNCH] Joined - ID: \(launchID)")
                         return launchID
                     }
                 }
 
                 // Fallback: use the provided UUID
                 if let uuid = uuid {
-                    print("⚠️ [ReportPortal] Using UUID as launch ID: \(uuid)")
-                    Logger.shared.info("⚠️ Could not extract ID from 409 response, using provided UUID as launch ID: \(uuid)")
+                    print("⚠️ [LAUNCH] Using UUID as ID: \(uuid)")
                     return uuid
                 }
 
-                // Last resort: throw the original error if we can't determine the launch ID
-                print("❌ [ReportPortal] 409 Conflict but cannot determine launch ID")
-                Logger.shared.error("❌ 409 Conflict but cannot determine launch ID (no ID in response, no UUID provided)")
+                print("❌ [LAUNCH] 409 Conflict but cannot determine ID")
                 throw error
             }
 
@@ -162,13 +155,15 @@ public final class ReportingService: Sendable {
     ///   - tracker: Optional WorkerTracker for last-worker detection (simulators only)
     ///   - uuid: Launch UUID for coordination
     ///   - workerID: Current worker identifier
+    ///   - suiteCounterCoordinator: Optional SuiteCounterCoordinator to check active suites
     func finalizeLaunchV2(
         launchID: String,
         status: TestStatus,
         coordinator: FinishCoordinator? = nil,
         tracker: WorkerTracker? = nil,
         uuid: String? = nil,
-        workerID: String? = nil
+        workerID: String? = nil,
+        suiteCounterCoordinator: SuiteCounterCoordinator? = nil
     ) async throws {
         Logger.shared.info("Attempting to finalize launch: \(launchID) with status: \(status.rawValue)")
 
@@ -181,23 +176,21 @@ public final class ReportingService: Sendable {
             // Record this worker's status
             try await coordinator.recordStatus(uuid: uuid, workerID: workerID, status: status)
             
-            // Check if we should finish the launch (last worker)
+            // Check if we should finish the launch (last worker AND all suites done)
             let (shouldFinish, aggregatedStatus) = try await coordinator.shouldFinishLaunch(
                 uuid: uuid,
                 workerID: workerID,
-                workerTracker: tracker
+                workerTracker: tracker,
+                suiteCounterCoordinator: suiteCounterCoordinator
             )
             
             guard shouldFinish, let finalStatus = aggregatedStatus else {
-                Logger.shared.info("⚡️ Not last worker - skipping finish API call. Another worker will finish the launch.")
-                
-                // Mark as finalized locally even though we didn't make the API call
+                print("⏸️  [SYNC] [FINISH] Not last worker - skipping API call")
                 await launchManager.markFinalized()
                 return
             }
             
-            // Last worker makes the API call with aggregated status
-            Logger.shared.info("✅ Last worker detected - finishing launch with aggregated status: \(finalStatus.rawValue)")
+            print("🏁 [SYNC] [FINISH] Last worker - calling finish API (status: \(finalStatus.rawValue))")
             
             let endPoint = FinishLaunchV2EndPoint(
                 launchID: launchID,
@@ -206,23 +199,18 @@ public final class ReportingService: Sendable {
             
             let _: LaunchFinish = try await httpClientV2.callEndPoint(endPoint)
             
-            // Mark as finalized in LaunchManager
             await launchManager.markFinalized()
-            
-            // Cleanup coordination files
             await coordinator.cleanupStatusFiles(uuid: uuid)
             
-            Logger.shared.info("✅ Launch finalized successfully (v2): \(launchID) with status: \(finalStatus.rawValue)")
+            print("✅ [SYNC] [FINISH] Launch finalized - ID: \(launchID), status: \(finalStatus.rawValue)")
         } else {
-            // No coordinator - direct API call (backward compatibility or real devices)
+            // No coordinator - direct API call
             let endPoint = FinishLaunchV2EndPoint(
                 launchID: launchID,
                 status: status
             )
             
             let _: LaunchFinish = try await httpClientV2.callEndPoint(endPoint)
-            
-            // Mark as finalized in LaunchManager
             await launchManager.markFinalized()
             
             Logger.shared.info("✅ Launch finalized successfully (v2 - direct): \(launchID) with status: \(status.rawValue)")

@@ -36,7 +36,7 @@ actor FinishCoordinator {
     func recordStatus(uuid: String, workerID: String, status: TestStatus) async throws {
         let filePath = "\(baseDirectory)/launch_\(uuid)_statuses.txt"
         
-        print("[\(correlationID)] Recording status for worker '\(workerID)': \(status.rawValue)")
+        print("[SYNC][\(correlationID)] Recording status for worker '\(workerID)': \(status.rawValue)")
         
         // Store in memory
         workerStatuses[workerID] = status
@@ -68,7 +68,7 @@ actor FinishCoordinator {
         let newContent = entries.joined(separator: "\n") + "\n"
         try newContent.write(toFile: filePath, atomically: true, encoding: .utf8)
         
-        print("[\(correlationID)] Status recorded successfully. Total workers: \(statuses.count)")
+        print("[SYNC][\(correlationID)] Status recorded successfully. Total workers: \(statuses.count)")
     }
     
     /// Check if worker should finish launch and get aggregated status
@@ -76,31 +76,43 @@ actor FinishCoordinator {
     ///   - uuid: Launch UUID
     ///   - workerID: Worker identifier
     ///   - workerTracker: WorkerTracker to check if last worker
+    ///   - suiteCounterCoordinator: Optional suite counter to check for active suites
     /// - Returns: Tuple (shouldFinish, aggregatedStatus)
     /// - Throws: FileCoordinationError if check fails
     func shouldFinishLaunch(
         uuid: String,
         workerID: String,
-        workerTracker: WorkerTracker
+        workerTracker: WorkerTracker,
+        suiteCounterCoordinator: SuiteCounterCoordinator? = nil
     ) async throws -> (shouldFinish: Bool, aggregatedStatus: TestStatus?) {
+        // ⚠️ CRITICAL: Check if there are still active suites FIRST
+        // This prevents premature finalization while tests are still running
+        if let suiteCoordinator = suiteCounterCoordinator {
+            let activeSuiteCount = await suiteCoordinator.getSuiteCount(uuid: uuid)
+            guard activeSuiteCount == 0 else {
+                print("[SYNC][\(correlationID)] ⏳ Still have \(activeSuiteCount) active suites - skipping finalization")
+                return (shouldFinish: false, aggregatedStatus: nil)
+            }
+        }
+        
         // Check if this is the last worker
         let isLastWorker = try await workerTracker.unregisterWorker(uuid: uuid, workerID: workerID)
         
         guard isLastWorker else {
             let remainingCount = await workerTracker.getWorkerCount(uuid: uuid)
-            print("[\(correlationID)] ⏭️  Worker '\(workerID)' is NOT last worker. Remaining: \(remainingCount)")
-            print("[\(correlationID)] Skipping finish API call")
+            print("[SYNC][\(correlationID)] ⏭️  Worker '\(workerID)' is NOT last worker. Remaining: \(remainingCount)")
+            print("[SYNC][\(correlationID)] Skipping finish API call")
             return (shouldFinish: false, aggregatedStatus: nil)
         }
         
         // This is the last worker - aggregate statuses
-        print("[\(correlationID)] ✅ Worker '\(workerID)' is LAST WORKER")
-        print("[\(correlationID)] Aggregating statuses from all workers...")
+        print("[SYNC][\(correlationID)] ✅ Worker '\(workerID)' is LAST WORKER")
+        print("[SYNC][\(correlationID)] Aggregating statuses from all workers...")
         
         let aggregated = try await aggregateStatuses(uuid: uuid)
         
-        print("[\(correlationID)] Final aggregated status: \(aggregated.rawValue)")
-        print("[\(correlationID)] Calling finish API as last worker")
+        print("[SYNC][\(correlationID)] Final aggregated status: \(aggregated.rawValue)")
+        print("[SYNC][\(correlationID)] Calling finish API as last worker")
         
         return (shouldFinish: true, aggregatedStatus: aggregated)
     }
@@ -117,7 +129,7 @@ actor FinishCoordinator {
         guard FileManager.default.fileExists(atPath: filePath),
               let data = try? Data(contentsOf: URL(fileURLWithPath: filePath)),
               let content = String(data: data, encoding: .utf8) else {
-            print("[\(correlationID)] ⚠️ Status file not found or unreadable, defaulting to PASSED")
+            print("[SYNC][\(correlationID)] ⚠️ Status file not found or unreadable, defaulting to PASSED")
             return .passed
         }
         
@@ -130,13 +142,13 @@ actor FinishCoordinator {
             if parts.count == 2,
                let status = TestStatus(rawValue: parts[1]) {
                 allStatuses.append(status)
-                print("[\(correlationID)]   Worker '\(parts[0])': \(status.rawValue)")
+                print("[SYNC][\(correlationID)]   Worker '\(parts[0])': \(status.rawValue)")
             }
         }
         
         // If no statuses found, default to PASSED
         guard !allStatuses.isEmpty else {
-            print("[\(correlationID)] No worker statuses found, defaulting to PASSED")
+            print("[SYNC][\(correlationID)] No worker statuses found, defaulting to PASSED")
             return .passed
         }
         
@@ -159,14 +171,16 @@ actor FinishCoordinator {
         let statusFilePath = "\(baseDirectory)/launch_\(uuid)_statuses.txt"
         let finishLockPath = "\(baseDirectory)/launch_\(uuid)_finish.lock"
         let launchUUIDPath = "\(baseDirectory)/launch_uuid.txt"
+        let activeSuitesPath = "\(baseDirectory)/launch_\(uuid)_active_suites.txt"
+        let activeSuitesLockPath = "\(baseDirectory)/launch_\(uuid)_active_suites.lock"
         
-        for filePath in [statusFilePath, finishLockPath, launchUUIDPath] {
+        for filePath in [statusFilePath, finishLockPath, launchUUIDPath, activeSuitesPath, activeSuitesLockPath] {
             do {
                 try FileManager.default.removeItem(atPath: filePath)
                 print("[\(correlationID)] Cleaned up finish coordination file: \(filePath)")
             } catch {
-                Logger.shared.error("[ERROR] Failed to delete '\(filePath)': \(error.localizedDescription)", correlationID: correlationID)
-                print("[\(correlationID)] ⚠️ Failed to delete '\(filePath)': \(error.localizedDescription)")
+                Logger.shared.error("[SYNC][ERROR] Failed to delete '\(filePath)': \(error.localizedDescription)", correlationID: correlationID)
+                print("[SYNC][\(correlationID)] ⚠️ Failed to delete '\(filePath)': \(error.localizedDescription)")
             }
         }
     }

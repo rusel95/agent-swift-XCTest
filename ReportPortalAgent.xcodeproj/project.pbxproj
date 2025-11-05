@@ -3,12 +3,11 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 46;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		368751BD1F5867200021B74D /* RPListener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 368751B61F5867200021B74D /* RPListener.swift */; };
-		82C12628EAC440B48B84154C /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 14CDAECFB40F435B86200E2A /* Sentry */; };
 		850CF3682EB504F700BFF502 /* FinishLaunchV2EndPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF3672EB504F700BFF502 /* FinishLaunchV2EndPoint.swift */; };
 		850CF36A2EB5050600BFF502 /* PostLogEndPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF3692EB5050600BFF502 /* PostLogEndPoint.swift */; };
 		850CF36C2EB5051C00BFF502 /* StartLaunchV2EndPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF36B2EB5051C00BFF502 /* StartLaunchV2EndPoint.swift */; };
@@ -16,8 +15,8 @@
 		850CF3742EB5057300BFF502 /* ReportingServiceError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850CF3732EB5057300BFF502 /* ReportingServiceError.swift */; };
 		851D90F92EB14A3B0026437F /* LaunchManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 851D90F72EB14A3B0026437F /* LaunchManagerTests.swift */; };
 		851D90FA2EB14A3B0026437F /* OperationTrackerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 851D90F82EB14A3B0026437F /* OperationTrackerTests.swift */; };
+		8535893D2EBA9B9500314EA7 /* SuiteCounterCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8535893C2EBA9B9500314EA7 /* SuiteCounterCoordinator.swift */; };
 		8539CC2B2EBA3F7D00F1C1BA /* (null) in Frameworks */ = {isa = PBXBuildFile; };
-		8539CC2C2EBA3F7D00F1C1BA /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 14CDAECFB40F435B86200E2A /* Sentry */; };
 		8539CC2D2EBA3F7D00F1C1BA /* (null) in Frameworks */ = {isa = PBXBuildFile; };
 		8539CC2E2EBA3F7D00F1C1BA /* (null) in Frameworks */ = {isa = PBXBuildFile; };
 		8539CC302EBA58E300F1C1BA /* FinishCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8539CC2F2EBA58E300F1C1BA /* FinishCoordinator.swift */; };
@@ -121,6 +120,7 @@
 		850CF3732EB5057300BFF502 /* ReportingServiceError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportingServiceError.swift; sourceTree = "<group>"; };
 		851D90F72EB14A3B0026437F /* LaunchManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchManagerTests.swift; sourceTree = "<group>"; };
 		851D90F82EB14A3B0026437F /* OperationTrackerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperationTrackerTests.swift; sourceTree = "<group>"; };
+		8535893C2EBA9B9500314EA7 /* SuiteCounterCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuiteCounterCoordinator.swift; sourceTree = "<group>"; };
 		8539CC2F2EBA58E300F1C1BA /* FinishCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinishCoordinator.swift; sourceTree = "<group>"; };
 		8539CC312EBA58F200F1C1BA /* SuiteCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuiteCoordinator.swift; sourceTree = "<group>"; };
 		8539CC332EBA58F900F1C1BA /* WorkerTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkerTracker.swift; sourceTree = "<group>"; };
@@ -186,7 +186,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				82C12628EAC440B48B84154C /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -195,7 +194,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				8539CC2B2EBA3F7D00F1C1BA /* (null) in Frameworks */,
-				8539CC2C2EBA3F7D00F1C1BA /* Sentry in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -328,6 +326,7 @@
 				92FEE06C1000000000000000 /* LogResponse.swift */,
 				85529CDF2EA909DA0080536D /* NameRules.swift */,
 				8539CC312EBA58F200F1C1BA /* SuiteCoordinator.swift */,
+				8535893C2EBA9B9500314EA7 /* SuiteCounterCoordinator.swift */,
 				85529CD32EA9095F0080536D /* SuiteOperation.swift */,
 				85529CD52EA909650080536D /* TestOperation.swift */,
 				8539CC332EBA58F900F1C1BA /* WorkerTracker.swift */,
@@ -408,7 +407,6 @@
 				9203A3882135C20C00BFAF82 /* Sources */,
 				9203A3892135C20C00BFAF82 /* Frameworks */,
 				9203A38A2135C20C00BFAF82 /* Resources */,
-				0EEF2D03C4B940A19DB6C99B /* Upload Debug Symbols to Sentry */,
 			);
 			buildRules = (
 			);
@@ -416,7 +414,6 @@
 			);
 			name = Example;
 			packageProductDependencies = (
-				14CDAECFB40F435B86200E2A /* Sentry */,
 			);
 			productName = Example;
 			productReference = 9203A38C2135C20C00BFAF82 /* Example.app */;
@@ -496,16 +493,14 @@
 			};
 			buildConfigurationList = 3687519F1F5866CA0021B74D /* Build configuration list for PBXProject "ReportPortalAgent" */;
 			compatibilityVersion = "Xcode 3.2";
-			developmentRegion = English;
+			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
-				English,
 				en,
 				Base,
 			);
 			mainGroup = 3687519B1F5866CA0021B74D;
 			packageReferences = (
-				E160777C42B84D20A770258A /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
 			);
 			productRefGroup = 368751A61F5866CA0021B74D /* Products */;
 			projectDirPath = "";
@@ -552,24 +547,6 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
-/* Begin PBXShellScriptBuildPhase section */
-		0EEF2D03C4B940A19DB6C99B /* Upload Debug Symbols to Sentry */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-				"${DWARF_DSYM_FOLDER_PATH}/${DWARF_DSYM_FILE_NAME}/Contents/Resources/DWARF/${TARGET_NAME}",
-			);
-			name = "Upload Debug Symbols to Sentry";
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "# This script is responsible for uploading debug symbols and source context for Sentry.\nif which sentry-cli >/dev/null; then\n  export SENTRY_ORG=ruslanpopesku\n  export SENTRY_PROJECT=report-portal\n  ERROR=$(sentry-cli debug-files upload --include-sources \"$DWARF_DSYM_FOLDER_PATH\" 2>&1 >/dev/null)\n  if [ ! $? -eq 0 ]; then\n    echo \"warning: sentry-cli - $ERROR\"\n  fi\nelse\n  echo \"warning: sentry-cli not installed, download from https://github.com/getsentry/sentry-cli/releases\"\nfi\n";
-		};
-/* End PBXShellScriptBuildPhase section */
-
 /* Begin PBXSourcesBuildPhase section */
 		368751A01F5866CA0021B74D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -579,6 +556,7 @@
 				85EE82942E38F79F005825E8 /* MetadataCollector.swift in Sources */,
 				92FEE074212EA37200ADB1ED /* TestStatus.swift in Sources */,
 				9203A3C32137264000BFAF82 /* LaunchMode.swift in Sources */,
+				8535893D2EBA9B9500314EA7 /* SuiteCounterCoordinator.swift in Sources */,
 				85529CE22EA90A060080536D /* Logger.swift in Sources */,
 				850CF3682EB504F700BFF502 /* FinishLaunchV2EndPoint.swift in Sources */,
 				850CF3722EB5055D00BFF502 /* SessionHelper.swift in Sources */,
@@ -811,8 +789,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				ONLY_ACTIVE_ARCH = NO;
 				SDKROOT = iphoneos;
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_OPTIMIZATION_LEVEL = "-Owholemodule";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VALIDATE_PRODUCT = YES;
 				VERSIONING_SYSTEM = "apple-generic";
@@ -837,11 +814,7 @@
 				);
 				INFOPLIST_FILE = "$(SRCROOT)/Sources/Info.plist";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
 				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.report-portal.xctestagent";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -869,11 +842,7 @@
 				);
 				INFOPLIST_FILE = "$(SRCROOT)/Sources/Info.plist";
 				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
 				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.report-portal.xctestagent";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -899,10 +868,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				INFOPLIST_FILE = Example/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.windmill.Example;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -928,10 +894,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				INFOPLIST_FILE = Example/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.windmill.Example;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -955,11 +918,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				INFOPLIST_FILE = ExampleUnitTests/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.windmill.ExampleUnitTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -983,11 +942,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				INFOPLIST_FILE = ExampleUnitTests/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.windmill.ExampleUnitTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1010,11 +965,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				INFOPLIST_FILE = ExampleUITests/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.windmill.ExampleUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1037,11 +988,7 @@
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				INFOPLIST_FILE = ExampleUITests/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.windmill.ExampleUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -1100,25 +1047,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		E160777C42B84D20A770258A /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/getsentry/sentry-cocoa/";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 8.0.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		14CDAECFB40F435B86200E2A /* Sentry */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E160777C42B84D20A770258A /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
-			productName = Sentry;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 3687519C1F5866CA0021B74D /* Project object */;
 }

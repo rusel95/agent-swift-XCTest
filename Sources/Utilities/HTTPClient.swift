@@ -82,7 +82,11 @@ class HTTPClient: NSObject, URLSessionDelegate, @unchecked Sendable {
       let body = String(data: data, encoding: .utf8)
       // Truncate large response bodies to prevent log spam (max 1KB)
       let truncatedBody = truncateForLog(body ?? "no body", maxLength: 1024)
-      Logger.shared.error("HTTP error \(httpResponse.statusCode): \(truncatedBody)")
+      
+      // Extract endpoint path for better error context
+      let path = request.url?.path ?? "unknown"
+      Logger.shared.error("HTTP error \(httpResponse.statusCode) for \(path): \(truncatedBody)")
+      
       throw HTTPClientError.httpError(statusCode: httpResponse.statusCode, body: body)
     }
 

@@ -8,11 +8,6 @@
 
 import Foundation
 
-// Conditionally import Sentry if available
-#if canImport(Sentry)
-import Sentry
-#endif
-
 /// Log level severity
 enum LogLevel: Int, Comparable {
     case debug = 0
@@ -104,67 +99,7 @@ struct Logger {
         logMessage += " \(message)"
 
         print(logMessage)
-
-        // Send warnings and errors to Sentry for distributed logging
-        #if canImport(Sentry)
-        if level == .warning || level == .error {
-            sendToSentry(message: message, level: level, correlationID: correlationID, file: fileName, line: line)
-        }
-        #endif
     }
-
-    #if canImport(Sentry)
-    /// Send log event to Sentry with context
-    /// - Parameters:
-    ///   - message: Log message
-    ///   - level: Log level
-    ///   - correlationID: Optional correlation ID
-    ///   - file: Source file name
-    ///   - line: Source line number
-    private func sendToSentry(
-        message: String,
-        level: LogLevel,
-        correlationID: UUID?,
-        file: String,
-        line: Int
-    ) {
-        // Add breadcrumb for all warnings/errors
-        let breadcrumb = Breadcrumb(level: level == .error ? .error : .warning, category: "agent")
-        breadcrumb.message = message
-        breadcrumb.data = [
-            "file": file,
-            "line": line,
-            "thread": Thread.current.name ?? Thread.current.description
-        ]
-        if let corID = correlationID {
-            breadcrumb.data?["correlationID"] = corID.uuidString
-        }
-        SentrySDK.addBreadcrumb(breadcrumb)
-
-        // For errors, also capture as an event
-        if level == .error {
-            let event = Event(level: .error)
-            event.message = SentryMessage(formatted: message)
-            event.tags = [
-                "component": "ReportPortalAgent",
-                "file": file
-            ]
-            if let corID = correlationID {
-                event.tags?["correlationID"] = corID.uuidString
-            }
-
-            // Add context
-            event.extra = [
-                "line": line,
-                "thread": Thread.current.name ?? Thread.current.description,
-                "pid": getpid(),
-                "pgid": getpgid(getpid())
-            ]
-
-            SentrySDK.capture(event: event)
-        }
-    }
-    #endif
 
     /// Log a debug message
     /// - Parameters:

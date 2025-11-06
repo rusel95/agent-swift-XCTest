@@ -32,6 +32,10 @@ final class ParallelEdgeCasesUITests: XCTestCase {
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
+        
+        // Reduce system logging noise
+        app.launchEnvironment["OS_ACTIVITY_MODE"] = "disable"
+        
         app.launch()
         waitForAppToBeReady(app, timeout: 5.0)
         waitForElementToBeHittable(firstField, timeout: 5.0)

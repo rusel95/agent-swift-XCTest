@@ -83,6 +83,9 @@ open class RPListener: NSObject, XCTestObservation {
     // Suite coordination for file-based deduplication (simulators only)
     private var suiteCoordinator: SuiteCoordinator?
     
+    // Suite counter coordination for cross-worker suite tracking (simulators only)
+    private var suiteCounterCoordinator: SuiteCounterCoordinator?
+    
     // Worker and finish coordination for parallel execution (simulators only)
     private var workerTracker: WorkerTracker?
     private var finishCoordinator: FinishCoordinator?
@@ -173,6 +176,9 @@ open class RPListener: NSObject, XCTestObservation {
         // Initialize suite coordinator for file-based deduplication (simulators only)
         self.suiteCoordinator = SuiteCoordinator()
         
+        // Initialize suite counter coordinator for cross-worker suite tracking (simulators only)
+        self.suiteCounterCoordinator = SuiteCounterCoordinator()
+        
         // Initialize finish coordination actors (simulators only)
         self.workerTracker = WorkerTracker()
         self.finishCoordinator = FinishCoordinator()
@@ -182,10 +188,10 @@ open class RPListener: NSObject, XCTestObservation {
         let pgid = getpgid(pid)
         self.workerID = "\(pid)_\(pgid)"
 
-        // Log bundle start
-        let bundleName = (testBundle.bundlePath as NSString).lastPathComponent
-        print("🟢 [ReportPortal] Bundle started: \(bundleName) (PID: \(pid), PGID: \(pgid), WorkerID: \(self.workerID!))")
-        Logger.shared.info("Bundle started: \(bundleName)")
+        print("🟢 [SYNC] [BUNDLE] Started (Worker: \(self.workerID!))")
+        Task {
+            await SyncLogger.shared.logBundle("Started - Worker: \(self.workerID!)")
+        }
 
         // Increment bundle count and create launch if needed
         // For Unit test support: Use semaphore to ensure launch is created BEFORE tests start
@@ -219,39 +225,35 @@ open class RPListener: NSObject, XCTestObservation {
                 // Store for cleanup later
                 self.enhancedLaunchName = enhancedLaunchName
 
-                // UUID-based coordination: Generate or read UUID from environment
-                let launchUUID = await self.launchManager.getOrGenerateLaunchUUID()
-                print("🔑 [ReportPortal] Using launch UUID: \(launchUUID)")
-                Logger.shared.info("Using launch UUID for coordination: \(launchUUID)")
-
-                // Create launch with UUID (or join existing if 409 Conflict)
-                // All workers call this - first succeeds, others get 409 and join
-                print("🚀 [ReportPortal] Attempting to create/join launch...")
-                Logger.shared.info("Attempting to create/join launch with UUID: \(launchUUID)")
+                // UUID-based coordination with file-based fallback
+                let launchUUID = await self.launchManager.getOrCreateLaunchUUID()
+                // LAUNCH COORDINATION
+                await SyncLogger.shared.logLaunch("Creating/joining with UUID: \(launchUUID)")
+                print("🚀 [SYNC] [LAUNCH] Creating/joining with UUID: \(launchUUID)")
                 let launchID = try await reportingService.startLaunchV2(
                     name: enhancedLaunchName,
                     uuid: launchUUID,
                     tags: configuration.tags,
                     attributes: attributes
                 )
-
-                // Set coordinated launch ID in LaunchManager
                 await self.launchManager.setLaunchID(launchID)
-
-                print("✅ [ReportPortal] Launch ready: \(launchID)")
-                Logger.shared.info("Launch ready - using launch ID: \(launchID) (UUID: \(launchUUID))")
+                await SyncLogger.shared.logLaunch("Launch created - ID: \(launchID)")
+                print("✅ [SYNC] [LAUNCH] Ready - ID: \(launchID)")
                 
-                // Register worker in WorkerTracker (for finish coordination)
+                // WORKER REGISTRATION
                 if let tracker = self.workerTracker, let workerID = self.workerID {
                     do {
                         try await tracker.registerWorker(uuid: launchUUID, workerID: workerID)
-                        Logger.shared.info("Worker registered: \(workerID)")
+                        await SyncLogger.shared.logWorker("Registered: \(workerID) for UUID: \(launchUUID)")
+                        print("👷 [SYNC] [WORKER] Registered: \(workerID)")
                     } catch {
-                        Logger.shared.error("Failed to register worker: \(error.localizedDescription)")
+                        await SyncLogger.shared.logWorker("Registration failed: \(error.localizedDescription)")
+                        print("❌ [SYNC] [WORKER] Registration failed: \(error.localizedDescription)")
                     }
                 }
             } catch {
-                Logger.shared.error("Failed to get/create launch: \(error.localizedDescription)")
+                await SyncLogger.shared.logLaunch("Creation failed: \(error.localizedDescription)")
+                print("❌ [SYNC] [LAUNCH] Creation failed: \(error.localizedDescription)")
             }
         }
 
@@ -383,13 +385,12 @@ open class RPListener: NSObject, XCTestObservation {
                         // when XCTest skips bundle-level suite callbacks
                         // Solution: Make this a root-level suite instead
                         rootSuiteID = nil
-                        Logger.shared.warning("""
-                            [PARALLEL] ⚠️ ROOT SUITE NOT FOUND (creating standalone suite):
+                        Logger.shared.info("""
+                            [PARALLEL] ℹ️  ROOT SUITE SKIPPED (creating standalone suite):
                             - Test class suite: '\(testSuite.name)'
-                            - Error: \(error.localizedDescription)
-                            - Waited 3 seconds for root suite to be created
-                            - This happens when XCTest skips bundle callbacks in parallel execution
-                            - Solution: Creating suite at root level (no parent)
+                            - Reason: \(error.localizedDescription)
+                            - This is NORMAL in parallel execution when XCTest skips bundle callbacks
+                            - Solution: Creating suite at root level (no parent hierarchy)
                             """, correlationID: correlationID)
                     }
                 } else {
@@ -431,6 +432,23 @@ open class RPListener: NSObject, XCTestObservation {
                 // Update operation with suite ID
                 operation.suiteID = suiteID
                 await self.operationTracker.updateSuite(operation, identifier: identifier)
+
+                // Register suite in global registry (file-based coordination across all workers)
+                if let counterCoordinator = self.suiteCounterCoordinator {
+                    do {
+                        let launchUUID = await self.launchManager.getOrCreateLaunchUUID()
+                        let totalCount = try await counterCoordinator.registerSuite(
+                            uuid: launchUUID,
+                            suiteName: testSuite.name,
+                            suiteID: suiteID
+                        )
+                        await SyncLogger.shared.logSuite("Registered '\(testSuite.name)' - UUID: \(launchUUID), Total active: \(totalCount)")
+                        print("📊 [SYNC] [SUITE] Registered '\(testSuite.name)' (Total active: \(totalCount))")
+                    } catch {
+                        await SyncLogger.shared.logSuite("Registration failed: \(error.localizedDescription)")
+                        print("❌ [SYNC] [SUITE] Registration failed: \(error.localizedDescription)")
+                    }
+                }
 
                 // Store root suite ID if this is root
                 if isRootSuite {
@@ -475,6 +493,33 @@ open class RPListener: NSObject, XCTestObservation {
         // - Tests run inside Suite, so Suite already exists
         // - Synchronizing every test would slow down test execution significantly
         // - For very fast tests (1-10ms), async tracking is acceptable trade-off
+        
+        // CRITICAL FIX: Tests can fail VERY quickly (before async registration completes).
+        // Register a placeholder synchronously to ensure test can be found by didRecord:issue callbacks.
+        let testName = extractTestName(from: testCase)
+        let identifier = "\(className).\(testName)"
+        let correlationID = UUID()
+        
+        // Create placeholder operation (will be updated asynchronously)
+        let placeholderOperation = TestOperation(
+            correlationID: correlationID,
+            testID: "", // Will be set after API call
+            suiteID: "", // Will be set after suite lookup
+            testName: testName,
+            className: className,
+            status: .passed,
+            startTime: Date(),
+            metadata: [:],
+            attachments: []
+        )
+        
+        // Register immediately with high priority (non-blocking but executes ASAP)
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
+            await self.operationTracker.registerTest(placeholderOperation, identifier: identifier)
+        }
+        
+        // ASYNC: Complete registration with ReportPortal API
         Task {
             // Wait for launch ID (properly awaits task, no polling)
             let launchID: String
@@ -482,8 +527,6 @@ open class RPListener: NSObject, XCTestObservation {
                 launchID = try await waitForLaunchID()
             } catch {
                 let bundleCount = await launchManager.getActiveBundleCount()
-                let testName = extractTestName(from: testCase)
-                let className = String(describing: type(of: testCase))
                 Logger.shared.error("""
                     ❌ TEST REGISTRATION FAILED: '\(className).\(testName)'
                     Reason: \(error.localizedDescription)
@@ -495,12 +538,6 @@ open class RPListener: NSObject, XCTestObservation {
             }
             
             do {
-                let correlationID = UUID()
-
-                // Extract test information
-                let testName = extractTestName(from: testCase)
-                let className = String(describing: type(of: testCase))
-                let identifier = "\(className).\(testName)"
 
                 // DIAGNOSTIC: Log test details
                 Logger.shared.info("""
@@ -527,7 +564,7 @@ open class RPListener: NSObject, XCTestObservation {
                 // Collect metadata
                 let metadata = collectTestMetadata()
                 
-                // Create test operation
+                // Update placeholder operation with full details
                 var operation = TestOperation(
                     correlationID: correlationID,
                     testID: "", // Will be set after API call
@@ -540,8 +577,8 @@ open class RPListener: NSObject, XCTestObservation {
                     attachments: []
                 )
                 
-                // Register test in tracker
-                await operationTracker.registerTest(operation, identifier: identifier)
+                // Update test in tracker (replace placeholder)
+                await operationTracker.updateTest(operation, identifier: identifier)
                 
                 // Start test in ReportPortal
                 let testID = try await asyncService.startTest(operation: operation, launchID: launchID)
@@ -664,20 +701,113 @@ open class RPListener: NSObject, XCTestObservation {
                 return
             }
 
+            // Validate launch ID is not empty
+            guard !launchID.isEmpty else {
+                let testName = extractTestName(from: testCase)
+                let className = String(describing: type(of: testCase))
+                Logger.shared.error("""
+                    ❌ Cannot report test issue: '\(className).\(testName)'
+                    Reason: Launch ID is empty (race condition - launch not initialized yet)
+                    Launch State: \(await launchManager.getDebugState())
+                    Impact: Screenshot and error log will not be uploaded
+                    Note: Test result will still be recorded in testCaseDidFinish
+                    """)
+                return
+            }
+
             // Build identifier to get test operation
             let testName = extractTestName(from: testCase)
             let className = String(describing: type(of: testCase))
             let identifier = "\(className).\(testName)"
 
-            guard var operation = await operationTracker.getTest(identifier: identifier) else {
-                Logger.shared.warning("""
-                    ⚠️ Cannot report test issue: Test operation not found for '\(identifier)'
-                    Reason: Test may not have been registered successfully
-                    Impact: Test failure details will not be visible in ReportPortal
+            guard let operation = await operationTracker.getTest(identifier: identifier) else {
+                Logger.shared.info("""
+                    ℹ️  Test issue reported before registration completed: '\(identifier)'
+                    Reason: Test failed extremely fast (< 1ms) before async registration finished
+                    Impact: Test failure will be recorded when test finishes (in testCaseDidFinish)
+                    Action: No action needed - this is rare but harmless for very fast failing tests
                     """)
                 return
             }
 
+            // Check if test has been fully registered with ReportPortal (has testID)
+            guard !operation.testID.isEmpty else {
+                // Test operation exists but testID is pending - retry after delay
+                Logger.shared.info("""
+                    ℹ️  Test issue reported before ReportPortal API completed: '\(identifier)'
+                    Reason: Test failed before async startTest API call completed
+                    Action: Retrying in 3 seconds...
+                    """, correlationID: operation.correlationID)
+                
+                // Capture issue data before async retry
+                let lineNumberString = issue.sourceCodeContext.location?.lineNumber != nil
+                    ? " on line \(issue.sourceCodeContext.location!.lineNumber)"
+                    : ""
+                let errorMessage = "Test '\(String(describing: issue.description))' failed\(lineNumberString), \(issue.description)"
+                
+                // Capture screenshot immediately (before it's lost)
+                #if canImport(UIKit)
+                let screenshot = XCUIScreen.main.screenshot()
+                let screenshotData = screenshot.pngRepresentation
+                let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
+                let filename = "failure_screenshot_\(timestamp).png"
+                #endif
+                
+                // Retry after 3 seconds (gives API time to complete)
+                Task {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+                    
+                    // Retry: Get operation again (should have testID now)
+                    guard let updatedOperation = await self.operationTracker.getTest(identifier: identifier),
+                          !updatedOperation.testID.isEmpty else {
+                        Logger.shared.warning("""
+                            ⚠️ Retry failed: Test '\(identifier)' still has no testID after 3s delay
+                            Impact: Screenshot/error log will be skipped for this test failure
+                            Note: Test result will still be recorded in testCaseDidFinish
+                            """)
+                        return
+                    }
+                    
+                    // Now we have testID - proceed with posting failure
+                    Logger.shared.info("✅ Retry successful: Test '\(identifier)' now has testID: \(updatedOperation.testID)", correlationID: updatedOperation.correlationID)
+                    
+                    do {
+                        // Post error log
+                        Logger.shared.debug("Posting error log for test \(updatedOperation.testID) with launch \(launchID)", correlationID: updatedOperation.correlationID)
+                        try await asyncService.postLog(
+                            message: errorMessage,
+                            level: "error",
+                            itemID: updatedOperation.testID,
+                            launchID: launchID,
+                            correlationID: updatedOperation.correlationID
+                        )
+                        
+                        // Upload screenshot
+                        #if canImport(UIKit)
+                        do {
+                            Logger.shared.debug("Uploading screenshot for test \(updatedOperation.testID) with launch \(launchID)", correlationID: updatedOperation.correlationID)
+                            try await asyncService.postScreenshot(
+                                screenshotData: screenshotData,
+                                filename: filename,
+                                itemID: updatedOperation.testID,
+                                launchID: launchID,
+                                correlationID: updatedOperation.correlationID
+                            )
+                            Logger.shared.info("📸 Screenshot uploaded successfully (after retry)", correlationID: updatedOperation.correlationID)
+                        } catch {
+                            Logger.shared.warning("Failed to upload screenshot after retry: \(error.localizedDescription)", correlationID: updatedOperation.correlationID)
+                        }
+                        #endif
+                        
+                        Logger.shared.info("TEST FAIL reported (after retry)", correlationID: updatedOperation.correlationID)
+                    } catch {
+                        Logger.shared.error("Failed to report TEST FAIL after retry: \(error.localizedDescription)", correlationID: updatedOperation.correlationID)
+                    }
+                }
+                return
+            }
+
+            // Test has testID - proceed immediately
             do {
                 let lineNumberString = issue.sourceCodeContext.location?.lineNumber != nil
                 ? " on line \(issue.sourceCodeContext.location!.lineNumber)"
@@ -685,6 +815,7 @@ open class RPListener: NSObject, XCTestObservation {
                 let errorMessage = "Test '\(String(describing: issue.description))' failed\(lineNumberString), \(issue.description)"
 
                 // Post error log with async API (non-blocking)
+                Logger.shared.debug("Posting error log for test \(operation.testID) with launch \(launchID)", correlationID: operation.correlationID)
                 try await asyncService.postLog(
                     message: errorMessage,
                     level: "error",
@@ -700,6 +831,7 @@ open class RPListener: NSObject, XCTestObservation {
                     let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
                     let filename = "failure_screenshot_\(timestamp).png"
 
+                    Logger.shared.debug("Uploading screenshot for test \(operation.testID) with launch \(launchID)", correlationID: operation.correlationID)
                     try await asyncService.postScreenshot(
                         screenshotData: screenshot.pngRepresentation,
                         filename: filename,
@@ -709,13 +841,13 @@ open class RPListener: NSObject, XCTestObservation {
                     )
                     Logger.shared.info("📸 Screenshot uploaded successfully", correlationID: operation.correlationID)
                 } catch {
-                    Logger.shared.warning("Failed to upload screenshot: \(error.localizedDescription)", correlationID: operation.correlationID)
+                    Logger.shared.warning("Failed to upload screenshot: \(error.localizedDescription) (Launch: \(launchID), Test: \(operation.testID))", correlationID: operation.correlationID)
                 }
                 #endif
 
                 Logger.shared.info("TEST FAIL reported", correlationID: operation.correlationID)
             } catch {
-                Logger.shared.error("Failed to report TEST FAIL: \(error.localizedDescription)", correlationID: operation.correlationID)
+                Logger.shared.error("Failed to report TEST FAIL: \(error.localizedDescription) (Launch: \(launchID), Test: \(operation.testID))", correlationID: operation.correlationID)
             }
         }
     }
@@ -879,20 +1011,109 @@ open class RPListener: NSObject, XCTestObservation {
                 return
             }
             
+            // Finish suite in ReportPortal (may fail, but cleanup must still happen)
             do {
-                // Determine final status (would be updated from child tests in production)
-                // For now, keep as-is - in full implementation, aggregate from child tests
-                
-                // Finish suite in ReportPortal
                 try await asyncService.finishSuite(operation: operation)
-                
-                // Unregister suite from tracker (cleanup)
-                await operationTracker.unregisterSuite(identifier: identifier)
-                
                 Logger.shared.info("Suite finished: \(operation.suiteID)", correlationID: operation.correlationID)
             } catch {
                 Logger.shared.error("Failed to finish suite '\(testSuite.name)': \(error.localizedDescription)", correlationID: operation.correlationID)
             }
+            
+            // ⚠️ CRITICAL: ALWAYS unregister suite - even if finish failed above
+            // This MUST happen to prevent infinite loops
+            await operationTracker.unregisterSuite(identifier: identifier)
+            
+            // Unregister suite from global registry (file-based coordination across all workers)
+            if let counterCoordinator = self.suiteCounterCoordinator {
+                do {
+                    let launchUUID = await self.launchManager.getOrCreateLaunchUUID()
+                    let remainingCount = try await counterCoordinator.unregisterSuite(
+                        uuid: launchUUID,
+                        suiteName: testSuite.name
+                    )
+                    await SyncLogger.shared.logSuite("Unregistered '\(testSuite.name)' - UUID: \(launchUUID), Remaining: \(remainingCount)")
+                    print("📊 [SYNC] [SUITE] Unregistered '\(testSuite.name)' (Remaining: \(remainingCount))")
+                } catch {
+                    await SyncLogger.shared.logSuite("Unregistration failed: \(error.localizedDescription)")
+                    print("❌ [SYNC] [SUITE] Unregistration failed: \(error.localizedDescription)")
+                }
+            }
+            
+            // 🔥 CRITICAL: Trigger launch finalization check after suite cleanup
+            await self.checkAndFinalizeLaunchIfNeeded()
+        }
+    }
+    
+    /// Check if all suites are finished and finalize launch if needed
+    /// Called after each suite finish in parallel execution mode
+    /// Uses GLOBAL file-based suite counter to check if ALL workers are done
+    private func checkAndFinalizeLaunchIfNeeded() async {
+        // Get launch UUID for coordination
+        let launchUUID = await launchManager.getOrCreateLaunchUUID()
+        
+        // Check GLOBAL suite count across ALL workers (file-based coordination)
+        let globalSuiteCount: Int
+        if let counterCoordinator = suiteCounterCoordinator {
+            globalSuiteCount = await counterCoordinator.getSuiteCount(uuid: launchUUID)
+        } else {
+            globalSuiteCount = await operationTracker.getActiveSuiteCount()
+        }
+        
+        guard globalSuiteCount == 0 else {
+            await SyncLogger.shared.logFinish("Waiting - \(globalSuiteCount) suites still active - UUID: \(launchUUID)")
+            print("⏳ [SYNC] [FINISH] Waiting... \(globalSuiteCount) suites still active")
+            return
+        }
+        
+        await SyncLogger.shared.logFinish("All suites done! Checking finalization - UUID: \(launchUUID)")
+        print("🎯 [SYNC] [FINISH] All suites done! Checking finalization...")
+        
+        // Check if launch already finalized
+        let isFinalized = await launchManager.isLaunchFinalized()
+        guard !isFinalized else {
+            await SyncLogger.shared.logFinish("Already finalized by another worker - UUID: \(launchUUID)")
+            print("✅ [SYNC] [FINISH] Already finalized by another worker")
+            return
+        }
+        
+        guard let launchID = await launchManager.getLaunchID() else {
+            print("❌ [SYNC] [FINISH] No launch ID found")
+
+            return
+        }
+        
+        guard let tracker = workerTracker,
+              let coordinator = finishCoordinator,
+              let workerID = workerID else {
+            Logger.shared.error("❌ Cannot finalize: missing coordination components")
+            await SyncLogger.shared.logFinish("Missing coordination components - UUID: \(launchUUID)")
+            print("❌ [ReportPortal] Missing coordination components (tracker/coordinator/workerID)")
+            return
+        }
+        
+        let status = await launchManager.getAggregatedStatus()
+        
+        await SyncLogger.shared.logFinish("Worker \(workerID) attempting finalization - UUID: \(launchUUID), Status: \(status.rawValue), LaunchID: \(launchID)")
+        print("🔄 [SYNC] [FINISH] Worker \(workerID) attempting finalization (status: \(status.rawValue))")
+        
+        do {
+            if let asyncService = reportingService {
+                try await asyncService.finalizeLaunchV2(
+                    launchID: launchID,
+                    status: status,
+                    coordinator: coordinator,
+                    tracker: tracker,
+                    uuid: launchUUID,
+                    workerID: workerID,
+                    suiteCounterCoordinator: suiteCounterCoordinator
+                )
+                
+                await SyncLogger.shared.logFinish("Worker \(workerID) finalization complete - UUID: \(launchUUID)")
+                print("✅ [SYNC] [FINISH] Worker \(workerID) finalization complete")
+            }
+        } catch {
+            await SyncLogger.shared.logFinish("Worker \(workerID) error: \(error.localizedDescription) - UUID: \(launchUUID)")
+            print("❌ [SYNC] [FINISH] Worker \(workerID) error: \(error.localizedDescription)")
         }
     }
     
@@ -902,49 +1123,21 @@ open class RPListener: NSObject, XCTestObservation {
             return
         }
 
-        // Decrement bundle count
+        print("🔔 [SYNC] [BUNDLE] testBundleDidFinish called")
+        
+        // Decrement bundle count (for diagnostics only)
+        // Finalization is handled by checkAndFinalizeLaunchIfNeeded() after each suite finishes
         Task {
             Logger.shared.info("Test bundle finishing...")
             let shouldFinalize = await launchManager.decrementBundleCount()
-            let isFinalized = await launchManager.isLaunchFinalized()
             let activeCount = await launchManager.getActiveBundleCount()
-
-            Logger.shared.info("Bundle count decremented. Active bundles: \(activeCount), Should finalize: \(shouldFinalize), Already finalized: \(isFinalized)")
-
-            if shouldFinalize && !isFinalized {
-                // This is the last bundle - finalize launch
-                guard let launchID = await launchManager.getLaunchID() else {
-                    Logger.shared.error("Cannot finalize launch: launch ID not found")
-                    return
-                }
-
-                let status = await launchManager.getAggregatedStatus()
-                Logger.shared.info("Last bundle finished. Finalizing launch \(launchID) with status: \(status.rawValue)")
-
-                do {
-                    if let asyncService = reportingService {
-                        // Get launch UUID and worker ID for coordination
-                        let launchUUID = await launchManager.getOrGenerateLaunchUUID()
-                        
-                        // Use finalizeLaunchV2 with file-based finish coordination
-                        // Only last worker will make the API call
-                        try await asyncService.finalizeLaunchV2(
-                            launchID: launchID,
-                            status: status,
-                            coordinator: finishCoordinator,
-                            tracker: workerTracker,
-                            uuid: launchUUID,
-                            workerID: workerID
-                        )
-                    }
-                } catch {
-                    Logger.shared.error("Failed to finalize launch: \(error.localizedDescription)")
-                }
-            } else if isFinalized {
-                Logger.shared.info("Bundle finished, but launch already finalized by another worker")
-            } else {
-                Logger.shared.info("Bundle finished. \(activeCount) bundles still active, waiting for them to complete...")
-            }
+            
+            Logger.shared.info("Bundle count decremented. Active bundles: \(activeCount), Should finalize: \(shouldFinalize)")
+            print("📊 [SYNC] [BUNDLE] Active bundles: \(activeCount), Should finalize: \(shouldFinalize)")
+            
+            // Note: Launch finalization is handled by checkAndFinalizeLaunchIfNeeded()
+            // which is called after each suite finishes. This ensures proper coordination
+            // even when workers start at different times (e.g., 5 devices with staggered starts)
         }
     }
 }

@@ -147,15 +147,21 @@ public final class ReportingService: Sendable {
     }
 
     /// Finish launch in ReportPortal (v2 async API)
-    /// Used for parallel test execution with file-based finish coordination (single finish call)
+    /// 
+    /// **NEW APPROACH (Tolerant Finalization):**
+    /// - Each device/worker attempts to finalize independently
+    /// - First worker succeeds, others get 409 (Conflict) - EXPECTED and OK
+    /// - 409 errors are silently handled - all test results preserved
+    /// - No complex "last worker" coordination needed
+    /// 
     /// - Parameters:
-    ///   - launchID: Launch ID from LaunchManager
+    ///   - launchID: Launch ID from LaunchManager (or RP_LAUNCH_ID env var)
     ///   - status: Worker's local status
-    ///   - coordinator: Optional FinishCoordinator for parallel coordination (simulators only)
-    ///   - tracker: Optional WorkerTracker for last-worker detection (simulators only)
-    ///   - uuid: Launch UUID for coordination
-    ///   - workerID: Current worker identifier
-    ///   - suiteCounterCoordinator: Optional SuiteCounterCoordinator to check active suites
+    ///   - coordinator: DEPRECATED - not used in tolerant approach
+    ///   - tracker: DEPRECATED - not used in tolerant approach
+    ///   - uuid: DEPRECATED - not used in tolerant approach
+    ///   - workerID: DEPRECATED - not used in tolerant approach
+    ///   - suiteCounterCoordinator: DEPRECATED - not used in tolerant approach
     func finalizeLaunchV2(
         launchID: String,
         status: TestStatus,
@@ -167,6 +173,45 @@ public final class ReportingService: Sendable {
     ) async throws {
         Logger.shared.info("Attempting to finalize launch: \(launchID) with status: \(status.rawValue)")
 
+        // TOLERANT APPROACH: Just try to finalize, handle 409 gracefully
+        // No need for complex worker coordination - let ReportPortal handle conflicts
+        
+        await SyncLogger.shared.logFinish("Attempting finalization - ID: \(launchID), status: \(status.rawValue)")
+        print("🏁 [SYNC] [FINISH] Attempting finalization - ID: \(launchID), status: \(status.rawValue)")
+        
+        let endPoint = FinishLaunchV2EndPoint(
+            launchID: launchID,
+            status: status
+        )
+        
+        do {
+            let _: LaunchFinish = try await httpClientV2.callEndPoint(endPoint)
+            await launchManager.markFinalized()
+            await SyncLogger.shared.logFinish("SUCCESS - Launch finalized - ID: \(launchID), status: \(status.rawValue)")
+            print("✅ [SYNC] [FINISH] Launch finalized successfully - ID: \(launchID)")
+            Logger.shared.info("✅ Launch finalized successfully: \(launchID) with status: \(status.rawValue)")
+        } catch HTTPClientError.httpError(let statusCode, _) where statusCode == 409 {
+            // 409 Conflict = another worker already finalized - EXPECTED and OK
+            await SyncLogger.shared.logFinish("409 CONFLICT - Already finalized by another worker - ID: \(launchID)")
+            print("ℹ️  [SYNC] [FINISH] Launch already finalized by another worker (409) - ID: \(launchID)")
+            Logger.shared.info("Launch already finalized by another worker (409 Conflict): \(launchID)")
+            await launchManager.markFinalized()
+            // Don't rethrow - this is success from our perspective
+        } catch {
+            // Other errors should be logged but not crash
+            await SyncLogger.shared.logFinish("ERROR - Finalization failed: \(error.localizedDescription) - ID: \(launchID)")
+            print("❌ [SYNC] [FINISH] Finalization error: \(error.localizedDescription)")
+            Logger.shared.error("Failed to finalize launch: \(error.localizedDescription)")
+            throw error
+        }
+        
+        /* COMMENTED OUT: Old worker coordination approach (source of truth problem)
+         * 
+         * PROBLEM: With staggered device starts (minutes apart), determining the "last worker"
+         * is fundamentally unreliable. This is a classic "source of truth" problem.
+         * 
+         * NEW SOLUTION: Tolerant finalization - each worker tries, 409 errors are OK.
+        
         // If coordinator is provided, use file-based coordination (simulator mode)
         if let coordinator = coordinator,
            let tracker = tracker,
@@ -185,8 +230,10 @@ public final class ReportingService: Sendable {
             )
             
             guard shouldFinish, let finalStatus = aggregatedStatus else {
-                print("⏸️  [SYNC] [FINISH] Not last worker - skipping API call")
-                await launchManager.markFinalized()
+                print("⏸️  [SYNC] [FINISH] Not last worker or suites still active - skipping API call")
+                // ⚠️ CRITICAL: Do NOT mark as finalized here!
+                // We're just waiting for other workers or active suites to finish
+                // Only mark finalized after actual API call or when confirmed already finalized
                 return
             }
             
@@ -215,6 +262,7 @@ public final class ReportingService: Sendable {
             
             Logger.shared.info("✅ Launch finalized successfully (v2 - direct): \(launchID) with status: \(status.rawValue)")
         }
+        */
     }
 
     // MARK: - Suite Management

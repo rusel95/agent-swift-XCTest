@@ -96,17 +96,20 @@ public final class ReportingService: Sendable {
         do {
             let result: LaunchV2Response = try await httpClientV2.callEndPoint(endPoint)
             print("✅ [SYNC] [LAUNCH] Created - ID: \(result.id)")
+            await SyncLogger.shared.logLaunch("Created - ID: \(result.id)")
             return result.id
         } catch let error as HTTPClientError {
             // Handle 409 Conflict - launch already exists (expected in parallel mode)
             if case .httpError(let statusCode, let body) = error, statusCode == 409 {
                 print("⚡️ [SYNC] [LAUNCH] 409 Conflict - joining existing launch")
+                await SyncLogger.shared.logLaunch("409 Conflict - joining existing launch")
 
                 // Try to extract launch ID from error response
                 if let body = body, let data = body.data(using: .utf8) {
                     if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let launchID = json["id"] as? String {
                         print("✅ [SYNC] [LAUNCH] Joined - ID: \(launchID)")
+                        await SyncLogger.shared.logLaunch("Joined - ID: \(launchID)")
                         return launchID
                     }
                 }

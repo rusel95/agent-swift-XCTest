@@ -102,11 +102,34 @@ actor LaunchManager {
         // Try to read existing UUID from file
         if let existingUUID = try? String(contentsOfFile: syncFilePath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            !existingUUID.isEmpty {
-            Logger.shared.info("📖 Read shared launch UUID from file: \(existingUUID)")
-            return existingUUID
+            
+            // Check file age - if older than 10 seconds, it's from a previous test run
+            // Parallel workers should all start within ~5-10 seconds of each other
+            // If it's older, the previous run likely failed and didn't clean up
+            if let attributes = try? FileManager.default.attributesOfItem(atPath: syncFilePath),
+               let modificationDate = attributes[.modificationDate] as? Date {
+                let ageInSeconds = Date().timeIntervalSince(modificationDate)
+                
+                if ageInSeconds > 10 { // 10 seconds - enough for parallel workers, but not for separate test runs
+                    Logger.shared.warning("⚠️ Launch UUID file is from previous run (age: \(Int(ageInSeconds))s > 10s). Creating new launch.")
+                    print("🔄 [SYNC] [LAUNCH] Previous run detected (UUID age: \(Int(ageInSeconds))s) - creating fresh launch")
+                    await SyncLogger.shared.logUUID("Previous run detected (age: \(Int(ageInSeconds))s) - creating fresh launch")
+                    try? FileManager.default.removeItem(atPath: syncFilePath)
+                    // Fall through to generate new UUID
+                } else {
+                    Logger.shared.info("📖 Joining same launch - UUID from file: \(existingUUID) (age: \(Int(ageInSeconds))s)")
+                    print("🔗 [SYNC] [LAUNCH] Joining parallel worker launch (UUID age: \(Int(ageInSeconds))s)")
+                    await SyncLogger.shared.logUUID("Joining parallel worker launch (age: \(Int(ageInSeconds))s)")
+                    return existingUUID
+                }
+            } else {
+                // Couldn't get file attributes, use UUID anyway (edge case)
+                Logger.shared.info("📖 Read shared launch UUID from file: \(existingUUID)")
+                return existingUUID
+            }
         }
         
-        // No existing UUID - we're the first worker, generate and write
+        // No existing UUID (or stale file deleted) - we're the first worker, generate and write
         let newUUID = UUID().uuidString
         
         // Create directory if needed
@@ -238,8 +261,18 @@ actor LaunchManager {
     }
 
     /// Retrieve current launch ID (non-blocking check)
-    /// - Returns: Launch ID if set, `nil` if launch not yet started
+    /// Priority 1: Check RP_LAUNCH_ID environment variable (Xcode pre-action script)
+    /// Priority 2: Return cached launch ID from API
+    /// - Returns: Launch ID if available, `nil` otherwise
     func getLaunchID() -> String? {
+        // Priority 1: Check environment variable (source of truth for Xcode runs)
+        if let envLaunchID = ProcessInfo.processInfo.environment["RP_LAUNCH_ID"],
+           !envLaunchID.isEmpty {
+            print("🌍 [LAUNCH] Using launch ID from RP_LAUNCH_ID: \(envLaunchID)")
+            return envLaunchID
+        }
+        
+        // Priority 2: Return cached launch ID
         return launchID
     }
 

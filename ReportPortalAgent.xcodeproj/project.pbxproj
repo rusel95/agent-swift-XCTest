@@ -445,6 +445,7 @@
 				9203A3A62135C20E00BFAF82 /* Sources */,
 				9203A3A72135C20E00BFAF82 /* Frameworks */,
 				9203A3A82135C20E00BFAF82 /* Resources */,
+				85EC93712EBC98490002613A /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -546,6 +547,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		85EC93712EBC98490002613A /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "##!/bin/zsh\n\necho \"🚀 [ReportPortal] Pre-Action: Setting environment variables\"\n\nLAUNCH_UUID=$(uuidgen)\nlaunchctl setenv RP_LAUNCH_UUID \"$LAUNCH_UUID\"\nlaunchctl setenv RP_LAUNCH_ID \"$LAUNCH_UUID\"\n\necho \"   RP_LAUNCH_UUID=$LAUNCH_UUID\"\necho \"✅ [ReportPortal] Environment ready\"\n Type a script or drag a script file from your workspace to insert its path.\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		368751A01F5866CA0021B74D /* Sources */ = {

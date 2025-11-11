@@ -38,6 +38,7 @@
 		85529CEB2EA90BD20080536D /* FinishLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CDB2EA909990080536D /* FinishLaunch.swift */; };
 		85529CEC2EA90BD20080536D /* NameRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CDF2EA909DA0080536D /* NameRules.swift */; };
 		85544E462EB26A4200B16B50 /* FileLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85544E452EB26A4200B16B50 /* FileLogger.swift */; };
+		856E507E2EBC9AAC00660C23 /* SyncLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 856E507D2EBC9AAC00660C23 /* SyncLogger.swift */; };
 		85B50B652EB1FF54003A22C5 /* XCTestCase+Expectations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85B50B642EB1FF54003A22C5 /* XCTestCase+Expectations.swift */; };
 		85DBACE52E44D5DA00297994 /* DeviceHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85DBACE42E44D5DA00297994 /* DeviceHelper.swift */; };
 		85E0F85E2EA957F7006255D3 /* ReportingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85E0F85D2EA957F7006255D3 /* ReportingService.swift */; };
@@ -137,6 +138,7 @@
 		85529CDF2EA909DA0080536D /* NameRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NameRules.swift; sourceTree = "<group>"; };
 		85529CE12EA90A060080536D /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		85544E452EB26A4200B16B50 /* FileLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileLogger.swift; sourceTree = "<group>"; };
+		856E507D2EBC9AAC00660C23 /* SyncLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncLogger.swift; sourceTree = "<group>"; };
 		85B50B642EB1FF54003A22C5 /* XCTestCase+Expectations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "XCTestCase+Expectations.swift"; sourceTree = "<group>"; };
 		85DBACE42E44D5DA00297994 /* DeviceHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceHelper.swift; sourceTree = "<group>"; };
 		85E0F85D2EA957F7006255D3 /* ReportingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportingService.swift; sourceTree = "<group>"; };
@@ -346,6 +348,7 @@
 				85EE82932E38F79F005825E8 /* MetadataCollector.swift */,
 				85529CD12EA9094F0080536D /* OperationTracker.swift */,
 				850CF3712EB5055D00BFF502 /* SessionHelper.swift */,
+				856E507D2EBC9AAC00660C23 /* SyncLogger.swift */,
 				92FEE08D212EEA0300ADB1ED /* TagHelper.swift */,
 				92FEE07F212ECB7900ADB1ED /* TimeHelper.swift */,
 				92FEE080212ECB7900ADB1ED /* UIDevice+ModelName.swift */,
@@ -445,7 +448,6 @@
 				9203A3A62135C20E00BFAF82 /* Sources */,
 				9203A3A72135C20E00BFAF82 /* Frameworks */,
 				9203A3A82135C20E00BFAF82 /* Resources */,
-				85EC93712EBC98490002613A /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -548,26 +550,6 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
-/* Begin PBXShellScriptBuildPhase section */
-		85EC93712EBC98490002613A /* ShellScript */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "##!/bin/zsh\n\necho \"🚀 [ReportPortal] Pre-Action: Setting environment variables\"\n\nLAUNCH_UUID=$(uuidgen)\nlaunchctl setenv RP_LAUNCH_UUID \"$LAUNCH_UUID\"\nlaunchctl setenv RP_LAUNCH_ID \"$LAUNCH_UUID\"\n\necho \"   RP_LAUNCH_UUID=$LAUNCH_UUID\"\necho \"✅ [ReportPortal] Environment ready\"\n Type a script or drag a script file from your workspace to insert its path.\n";
-		};
-/* End PBXShellScriptBuildPhase section */
-
 /* Begin PBXSourcesBuildPhase section */
 		368751A01F5866CA0021B74D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -580,6 +562,7 @@
 				8535893D2EBA9B9500314EA7 /* SuiteCounterCoordinator.swift in Sources */,
 				85529CE22EA90A060080536D /* Logger.swift in Sources */,
 				850CF3682EB504F700BFF502 /* FinishLaunchV2EndPoint.swift in Sources */,
+				856E507E2EBC9AAC00660C23 /* SyncLogger.swift in Sources */,
 				850CF3722EB5055D00BFF502 /* SessionHelper.swift in Sources */,
 				92FEE094212EEE2D00ADB1ED /* FinishItemEndPoint.swift in Sources */,
 				92FEE096212EF30700ADB1ED /* StartItemEndPoint.swift in Sources */,

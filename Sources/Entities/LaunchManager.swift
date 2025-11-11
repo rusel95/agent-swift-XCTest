@@ -103,23 +103,24 @@ actor LaunchManager {
         if let existingUUID = try? String(contentsOfFile: syncFilePath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            !existingUUID.isEmpty {
             
-            // Check file age - if older than 10 seconds, it's from a previous test run
-            // Parallel workers should all start within ~5-10 seconds of each other
-            // If it's older, the previous run likely failed and didn't clean up
+            // Check file age - if older than 60 seconds, it's from a previous test run
+            // Parallel workers may start with delays (especially with many test suites)
+            // 60 seconds provides comfortable buffer for delayed workers while still
+            // detecting stale files from previous failed runs
             if let attributes = try? FileManager.default.attributesOfItem(atPath: syncFilePath),
                let modificationDate = attributes[.modificationDate] as? Date {
                 let ageInSeconds = Date().timeIntervalSince(modificationDate)
                 
-                if ageInSeconds > 10 { // 10 seconds - enough for parallel workers, but not for separate test runs
-                    Logger.shared.warning("⚠️ Launch UUID file is from previous run (age: \(Int(ageInSeconds))s > 10s). Creating new launch.")
+                if ageInSeconds > 60 { // 60 seconds - comfortable buffer for delayed workers
+                    Logger.shared.warning("⚠️ Launch UUID file is from previous run (age: \(Int(ageInSeconds))s > 60s). Creating new launch.")
                     print("🔄 [SYNC] [LAUNCH] Previous run detected (UUID age: \(Int(ageInSeconds))s) - creating fresh launch")
-                    await SyncLogger.shared.logUUID("Previous run detected (age: \(Int(ageInSeconds))s) - creating fresh launch")
+                    Task { await SyncLogger.shared.logUUID("Previous run detected (age: \(Int(ageInSeconds))s) - creating fresh launch") }
                     try? FileManager.default.removeItem(atPath: syncFilePath)
                     // Fall through to generate new UUID
                 } else {
                     Logger.shared.info("📖 Joining same launch - UUID from file: \(existingUUID) (age: \(Int(ageInSeconds))s)")
                     print("🔗 [SYNC] [LAUNCH] Joining parallel worker launch (UUID age: \(Int(ageInSeconds))s)")
-                    await SyncLogger.shared.logUUID("Joining parallel worker launch (age: \(Int(ageInSeconds))s)")
+                    Task { await SyncLogger.shared.logUUID("Joining parallel worker launch (age: \(Int(ageInSeconds))s)") }
                     return existingUUID
                 }
             } else {

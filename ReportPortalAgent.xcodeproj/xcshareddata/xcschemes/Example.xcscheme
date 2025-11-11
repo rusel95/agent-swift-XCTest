@@ -33,7 +33,7 @@
             ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
             <ActionContent
                title = "Run Script"
-               scriptText = "export RP_LAUNCH_UUID=$(uuidgen)&#10;echo &quot;&#x1f680; ReportPortal Launch UUID: $RP_LAUNCH_UUID&quot;&#10;&#10;# Enable detailed logging&#10;export RP_LOG_ENABLED=true&#10;export RP_LOG_LEVEL=INFO&#10;echo &quot;&#x1f4cb; Logging enabled: INFO level&quot;&#10;">
+               scriptText = "#!/bin/zsh&#10;&#10;echo &quot;&#x1f680; [ReportPortal] Pre-Action: Setting environment variables&quot;&#10;&#10;LAUNCH_UUID=$(uuidgen)&#10;launchctl setenv RP_LAUNCH_UUID &quot;$LAUNCH_UUID&quot;&#10;launchctl setenv RP_LAUNCH_ID &quot;$LAUNCH_UUID&quot;&#10;&#10;echo &quot;   RP_LAUNCH_UUID=$LAUNCH_UUID&quot;&#10;echo &quot;&#x2705; [ReportPortal] Environment ready&quot;&#10;">
                <EnvironmentBuildable>
                   <BuildableReference
                      BuildableIdentifier = "primary"

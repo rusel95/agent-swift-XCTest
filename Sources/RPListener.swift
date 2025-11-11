@@ -1078,7 +1078,7 @@ open class RPListener: NSObject, XCTestObservation {
         
         guard let launchID = await launchManager.getLaunchID() else {
             print("❌ [SYNC] [FINISH] No launch ID found")
-
+            await SyncLogger.shared.logFinish("ERROR - No launch ID found")
             return
         }
         

@@ -86,11 +86,17 @@ public final class ReportingService: Sendable {
     ///   - launchID: Launch ID from LaunchManager
     ///   - status: Status to send (ReportPortal will calculate actual status from tests)
     func finalizeLaunch(launchID: String, status: TestStatus) async throws {
-        let endPoint = FinishLaunchEndPoint(launchID: launchID, status: status)
-
-        let _: LaunchFinish = try await httpClient.callEndPoint(endPoint)
-
-        Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
+        do {
+            let endPoint = FinishLaunchEndPoint(launchID: launchID, status: status)
+            let _: LaunchFinish = try await httpClient.callEndPoint(endPoint)
+            Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
+        } catch let error as HTTPClientError {
+            if case .httpError(let statusCode, _) = error, (400...499).contains(statusCode) {
+                Logger.shared.warning("⚠️ Launch finalization returned \(statusCode) — launch may already be finished (non-fatal)")
+                return
+            }
+            throw error
+        }
     }
 
     // MARK: - Suite Management

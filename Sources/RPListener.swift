@@ -33,6 +33,9 @@ open class RPListener: NSObject, XCTestObservation {
     // Flag to ensure launch is created only once
     private var isLaunchCreated = false
     
+    /// Cached test bundle for resolving configuration in testBundleDidFinish
+    private var cachedTestBundle: Bundle?
+    
     public override init() {
         super.init()
         
@@ -117,6 +120,7 @@ open class RPListener: NSObject, XCTestObservation {
         }
         
         isLaunchCreated = true
+        self.cachedTestBundle = testBundle
         Logger.shared.info("🎬 First bundle start detected - initializing ReportPortal reporting")
         
         // Create service for v4.0.0 async/await parallel execution
@@ -134,11 +138,16 @@ open class RPListener: NSObject, XCTestObservation {
         Task {
             await LaunchManager.shared.ensureLaunchStarted {
                 // Collect metadata attributes
-                let attributes: [[String: String]]
+                var attributes: [[String: String]]
                 if let bundle = testBundle as Bundle? {
                     attributes = MetadataCollector.collectAllAttributes(from: bundle, tags: configuration.tags)
                 } else {
                     attributes = MetadataCollector.collectDeviceAttributes()
+                }
+
+                // Resolve merge_group for SauceLabs post-run merge support
+                if let group = self.resolveMergeGroup(from: testBundle) {
+                    attributes.append(["key": "merge_group", "value": group])
                 }
 
                 // Get test plan name for launch name enhancement
@@ -726,13 +735,19 @@ open class RPListener: NSObject, XCTestObservation {
             // ReportPortal will calculate the final status from all test results
             Logger.shared.info("📊 Finalizing launch \(launchID)")
 
-            do {
-                if let asyncService = reportingService {
-                    try await asyncService.finalizeLaunch(launchID: launchID, status: .passed)
-                    Logger.shared.info("✅ Launch finalized successfully: \(launchID)")
+            let skipFinish = self.resolveSkipFinish(from: self.cachedTestBundle)
+            if skipFinish {
+                Logger.shared.info("⏭️ RP_SKIP_FINISH is set — skipping launch finalization")
+                Logger.shared.info("📋 Launch ID for manual/script finalization: \(launchID)")
+            } else {
+                do {
+                    if let asyncService = reportingService {
+                        try await asyncService.finalizeLaunch(launchID: launchID, status: .passed)
+                        Logger.shared.info("✅ Launch finalized successfully: \(launchID)")
+                    }
+                } catch {
+                    Logger.shared.error("❌ Failed to finalize launch: \(error.localizedDescription)")
                 }
-            } catch {
-                Logger.shared.error("❌ Failed to finalize launch: \(error.localizedDescription)")
             }
             
             // CRITICAL FIX: Remove test observer on main thread (XCTestObservationCenter requirement)
@@ -757,5 +772,40 @@ open class RPListener: NSObject, XCTestObservation {
         } else {
             Logger.shared.info("✅ Launch finalization completed successfully")
         }
+    }
+
+    // MARK: - SauceLabs Merge Support
+
+    /// Resolve mergeGroup: (1) RP_MERGE_GROUP env var, (2) ReportPortalMergeGroup Info.plist
+    func resolveMergeGroup(from testBundle: Bundle) -> String? {
+        if let envValue = ProcessInfo.processInfo.environment["RP_MERGE_GROUP"], !envValue.isEmpty {
+            Logger.shared.info("📎 merge_group from env var: \(envValue)")
+            return envValue
+        }
+        if let bundlePath = testBundle.path(forResource: "Info", ofType: "plist"),
+           let props = NSDictionary(contentsOfFile: bundlePath) as? [String: Any],
+           let plistValue = props["ReportPortalMergeGroup"] as? String, !plistValue.isEmpty {
+            Logger.shared.info("📎 merge_group from Info.plist: \(plistValue)")
+            return plistValue
+        }
+        return nil
+    }
+
+    /// Resolve skipFinish: (1) RP_SKIP_FINISH env var, (2) ReportPortalSkipFinish Info.plist, (3) false
+    func resolveSkipFinish(from testBundle: Bundle?) -> Bool {
+        if let envValue = ProcessInfo.processInfo.environment["RP_SKIP_FINISH"], !envValue.isEmpty {
+            Logger.shared.info("⏭️ skipFinish from env var: true")
+            return true
+        }
+        guard let bundle = testBundle,
+              let bundlePath = bundle.path(forResource: "Info", ofType: "plist"),
+              let props = NSDictionary(contentsOfFile: bundlePath) as? [String: Any] else {
+            return false
+        }
+        if let plistValue = props["ReportPortalSkipFinish"] as? Bool, plistValue {
+            Logger.shared.info("⏭️ skipFinish from Info.plist: true")
+            return true
+        }
+        return false
     }
 }

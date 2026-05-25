@@ -110,13 +110,27 @@ validate() {
 api_v1() { echo "${RP_ENDPOINT%/}/api/v1/${RP_PROJECT}"; }
 api_v2() { echo "${RP_ENDPOINT%/}/api/v2/${RP_PROJECT}"; }
 
-# --- Step 1: Find launches by merge_group (and ci_run_id when set) ---
+# --- Step 1: Find launches by merge_group (and ci_run_id only when launches have it) ---
 find_launches() {
   local url
   url="$(api_v1)/launch?filter.has.attributeKey=merge_group&filter.has.attributeValue=${RP_MERGE_GROUP}&page.size=50"
+
   if [[ -n "${RP_CI_RUN_ID:-}" ]]; then
-    url+="&filter.has.attributeKey=ci_run_id&filter.has.attributeValue=${RP_CI_RUN_ID}"
+    # First try with ci_run_id filter for disambiguation in concurrent CI runs
+    local filtered_url="${url}&filter.has.attributeKey=ci_run_id&filter.has.attributeValue=${RP_CI_RUN_ID}"
+    local resp
+    resp=$(rp_curl_retry -X GET "$filtered_url") || true
+    local count
+    count=$(echo "$resp" | jq '.content | length // 0' 2>/dev/null || echo 0)
+    if (( count > 0 )); then
+      printf '%s' "$resp"
+      return 0
+    fi
+    # Fall back to merge_group-only query when no launches have ci_run_id
+    # (e.g., SauceLabs real-device runs where env vars are not available)
+    log INFO "No launches with ci_run_id=${RP_CI_RUN_ID}, falling back to merge_group-only filter"
   fi
+
   rp_curl_retry -X GET "$url"
 }
 

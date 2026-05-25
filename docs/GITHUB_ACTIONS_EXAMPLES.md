@@ -180,7 +180,7 @@ Configure these in your repository settings (Settings → Secrets and variables 
 | `SAUCE_ACCESS_KEY` | SauceLabs access key | `abc123-def456-...` |
 | `RP_ENDPOINT` | ReportPortal base URL | `https://reportportal.example.com` |
 | `RP_PROJECT` | ReportPortal project name | `my_project` |
-| `RP_TOKEN` | ReportPortal API token | `Bearer abc123...` |
+| `RP_TOKEN` | ReportPortal API token (without Bearer prefix) | `abc123...` |
 
 ---
 

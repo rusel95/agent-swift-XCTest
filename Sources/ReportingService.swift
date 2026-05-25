@@ -91,8 +91,8 @@ public final class ReportingService: Sendable {
             let _: LaunchFinish = try await httpClient.callEndPoint(endPoint)
             Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
         } catch let error as HTTPClientError {
-            if case .httpError(let statusCode, _) = error, (400...499).contains(statusCode) {
-                Logger.shared.warning("⚠️ Launch finalization returned \(statusCode) — launch may already be finished (non-fatal)")
+            if case .httpError(let statusCode, _) = error, statusCode == 409 {
+                Logger.shared.warning("⚠️ Launch finalization returned 409 — launch already finished (idempotent, non-fatal)")
                 return
             }
             throw error

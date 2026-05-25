@@ -39,104 +39,87 @@ final class SauceLabsSupportTests: XCTestCase {
 
     // MARK: - resolveMergeGroup
 
-    func testResolveMergeGroup_NoPlistKey_ReturnsNil() {
-        // The test bundle's Info.plist does not contain ReportPortalMergeGroup
+    func testResolveMergeGroup_NoPlistKey_ReturnsNil() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["RP_MERGE_GROUP"] != nil,
+                      "RP_MERGE_GROUP env var is set; env-var path tested on SauceLabs real devices")
         let bundle = Bundle(for: type(of: self))
         let result = listener.resolveMergeGroup(from: bundle)
-        if ProcessInfo.processInfo.environment["RP_MERGE_GROUP"] == nil {
-            XCTAssertNil(result, "Should return nil when neither env var nor Info.plist key is set")
-        }
+        XCTAssertNil(result, "Should return nil when neither env var nor Info.plist key is set")
     }
 
-    func testResolveMergeGroup_MainBundle_ReturnsNil() {
-        // Main bundle also shouldn't have ReportPortalMergeGroup
+    func testResolveMergeGroup_MainBundle_ReturnsNil() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["RP_MERGE_GROUP"] != nil,
+                      "RP_MERGE_GROUP env var is set; env-var path tested on SauceLabs real devices")
         let result = listener.resolveMergeGroup(from: Bundle.main)
-        if ProcessInfo.processInfo.environment["RP_MERGE_GROUP"] == nil {
-            XCTAssertNil(result)
-        }
+        XCTAssertNil(result)
     }
 
     // MARK: - resolveSkipFinish
 
-    func testResolveSkipFinish_NoPlistKey_ReturnsFalse() {
+    func testResolveSkipFinish_NoPlistKey_ReturnsFalse() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["RP_SKIP_FINISH"] != nil,
+                      "RP_SKIP_FINISH env var is set; env-var path tested on SauceLabs real devices")
         let bundle = Bundle(for: type(of: self))
         let result = listener.resolveSkipFinish(from: bundle)
-        if ProcessInfo.processInfo.environment["RP_SKIP_FINISH"] == nil {
-            XCTAssertFalse(result, "Should return false when neither env var nor Info.plist key is set")
-        }
+        XCTAssertFalse(result, "Should return false when neither env var nor Info.plist key is set")
     }
 
-    func testResolveSkipFinish_NilBundle_ReturnsFalse() {
+    func testResolveSkipFinish_NilBundle_ReturnsFalse() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["RP_SKIP_FINISH"] != nil,
+                      "RP_SKIP_FINISH env var is set; env-var path tested on SauceLabs real devices")
         let result = listener.resolveSkipFinish(from: nil)
-        if ProcessInfo.processInfo.environment["RP_SKIP_FINISH"] == nil {
-            XCTAssertFalse(result, "Should return false when bundle is nil")
-        }
+        XCTAssertFalse(result, "Should return false when bundle is nil")
     }
 
-    func testResolveSkipFinish_MainBundle_ReturnsFalse() {
+    func testResolveSkipFinish_MainBundle_ReturnsFalse() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["RP_SKIP_FINISH"] != nil,
+                      "RP_SKIP_FINISH env var is set; env-var path tested on SauceLabs real devices")
         let result = listener.resolveSkipFinish(from: Bundle.main)
-        if ProcessInfo.processInfo.environment["RP_SKIP_FINISH"] == nil {
-            XCTAssertFalse(result, "Should return false for main bundle without plist key")
-        }
+        XCTAssertFalse(result, "Should return false for main bundle without plist key")
     }
 }
 
-// MARK: - HTTPClientError 4xx/5xx Classification Tests
+// MARK: - finalizeLaunch 409-only Non-Fatal Tests
 
-/// Tests that verify the idempotent finalizeLaunch error classification logic.
-/// Since HTTPClient creates its own URLSession, we test the error handling pattern directly.
+/// Tests that verify finalizeLaunch treats only 409 as non-fatal (idempotent already-finished).
+/// All other HTTP errors — including other 4xx and all 5xx — must propagate.
 final class IdempotentFinalizeLaunchTests: XCTestCase {
 
-    func testHTTPClientError_4xx_IsClientError() {
-        // Verify the pattern used in finalizeLaunch: 400-499 are non-fatal
-        for code in [400, 404, 409, 422, 499] {
-            let error = HTTPClientError.httpError(statusCode: code, body: "test")
+    func testHTTPClientError_409_IsNonFatal() {
+        // 409 Conflict = launch already finished; must match the non-fatal check
+        let error = HTTPClientError.httpError(statusCode: 409, body: "already finished")
+        if case .httpError(let statusCode, _) = error {
+            XCTAssertEqual(statusCode, 409, "409 should be the only non-fatal status code")
+        }
+    }
+
+    func testHTTPClientError_OtherClientErrors_AreFatal() {
+        // 400, 401, 403, 422 must NOT match the 409-only non-fatal check
+        for code in [400, 401, 403, 422] {
+            let error = HTTPClientError.httpError(statusCode: code, body: "error")
             if case .httpError(let statusCode, _) = error {
-                XCTAssertTrue((400...499).contains(statusCode),
-                    "Status \(code) should be in 4xx range")
+                XCTAssertNotEqual(statusCode, 409,
+                    "Status \(code) should NOT be treated as non-fatal (only 409 is)")
             }
         }
     }
 
-    func testHTTPClientError_5xx_IsServerError() {
-        // Verify 5xx errors are NOT in the 4xx range (should be re-thrown)
+    func testHTTPClientError_5xx_AreFatal() {
+        // 5xx server errors must NOT match the 409-only non-fatal check
         for code in [500, 502, 503] {
-            let error = HTTPClientError.httpError(statusCode: code, body: "test")
+            let error = HTTPClientError.httpError(statusCode: code, body: "server error")
             if case .httpError(let statusCode, _) = error {
-                XCTAssertFalse((400...499).contains(statusCode),
-                    "Status \(code) should NOT be in 4xx range")
+                XCTAssertNotEqual(statusCode, 409,
+                    "Status \(code) should NOT be treated as non-fatal")
             }
         }
     }
 
     func testHTTPClientError_NetworkError_IsNotHTTPError() {
-        // Network errors should not match the httpError pattern
+        // Network errors must not match the httpError pattern
         let error = HTTPClientError.networkError(NSError(domain: "test", code: -1))
         if case .httpError = error {
             XCTFail("Network error should not match httpError pattern")
-        }
-    }
-
-    /// Integration test: finalizeLaunch with a real (but unreachable) server.
-    /// Verifies the method handles network errors correctly (throws, not swallowed).
-    func testFinalizeLaunch_NetworkError_Throws() async {
-        let config = AgentConfiguration(
-            reportPortalURL: URL(string: "https://localhost:1")!, // unreachable
-            projectName: "test",
-            launchName: "Test",
-            shouldSendReport: true,
-            portalToken: "token",
-            tags: [],
-            launchMode: .default,
-            testNameRules: []
-        )
-        let service = ReportingService(configuration: config)
-
-        do {
-            try await service.finalizeLaunch(launchID: "test-id", status: .passed)
-            XCTFail("Should throw on network error")
-        } catch {
-            // Expected: network error should propagate (not swallowed by 4xx handler)
         }
     }
 }

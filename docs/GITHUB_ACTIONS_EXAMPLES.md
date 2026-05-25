@@ -44,7 +44,7 @@ jobs:
       - name: Inject UUID into xctestrun
         run: |
           XCTESTRUN=$(find ./DerivedData -name "*.xctestrun" | head -1)
-          scripts/inject_xctestrun_env.sh "$XCTESTRUN" "${{ steps.uuid.outputs.uuid }}"
+          scripts/inject_xctestrun_env.sh "$XCTESTRUN" RP_LAUNCH_UUID "${{ steps.uuid.outputs.uuid }}"
 
       - name: Package artifacts
         run: |

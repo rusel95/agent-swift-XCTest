@@ -34,7 +34,7 @@ chmod +x "$MOCK_CURL"
 export PATH="${TMPDIR_TEST}:${PATH}"
 
 # --- Test 1: Missing parameters → exit 3 ---
-output=$(RP_URL="" RP_PROJECT="" RP_TOKEN="" RP_MERGE_GROUP="" \
+output=$(RP_ENDPOINT="" RP_PROJECT="" RP_TOKEN="" RP_MERGE_GROUP="" \
   "$MERGE_SCRIPT" 2>&1) && rc=$? || rc=$?
 if [[ $rc -eq 3 ]]; then
   pass "missing params exits 3"
@@ -43,9 +43,9 @@ else
 fi
 
 # --- Test 2: Zero launches found → exit 1 ---
-output=$(RP_URL="https://rp.example.com" RP_PROJECT="proj" \
+output=$(RP_ENDPOINT="https://rp.example.com" RP_PROJECT="proj" \
   RP_TOKEN="secret_token_value" RP_MERGE_GROUP="test-group" \
-  RP_MERGE_TIMEOUT=1 \
+  RP_MERGE_FINALIZE_TIMEOUT=1 \
   "$MERGE_SCRIPT" 2>&1) && rc=$? || rc=$?
 if [[ $rc -eq 1 ]]; then
   pass "zero launches exits 1"

@@ -52,7 +52,7 @@ XCTESTRUN_PATH=$(find ./DerivedData -name "*.xctestrun" | head -1)
 export RP_LAUNCH_UUID=$(uuidgen)
 
 # Inject into xctestrun (all devices will read this UUID)
-scripts/inject_xctestrun_env.sh "$XCTESTRUN_PATH" "$RP_LAUNCH_UUID"
+scripts/inject_xctestrun_env.sh "$XCTESTRUN_PATH" RP_LAUNCH_UUID "$RP_LAUNCH_UUID"
 ```
 
 The injection script uses `PlistBuddy` to set `RP_LAUNCH_UUID` in the test target's `EnvironmentVariables` dictionary.

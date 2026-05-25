@@ -6,13 +6,14 @@
 set -euo pipefail
 
 # --- Configuration (env vars, overridable by CLI args) ---
-RP_URL="${RP_URL:-${1:-}}"
+RP_ENDPOINT="${RP_ENDPOINT:-${1:-}}"
 RP_PROJECT="${RP_PROJECT:-${2:-}}"
 RP_TOKEN="${RP_TOKEN:-${3:-}}"
 RP_MERGE_GROUP="${RP_MERGE_GROUP:-${4:-}}"
+RP_CI_RUN_ID="${RP_CI_RUN_ID:-${GITHUB_RUN_ID:-}}"
 RP_EXPECTED_LAUNCHES="${RP_EXPECTED_LAUNCHES:-}"
-RP_MERGE_NAME="${RP_MERGE_NAME:-"${RP_MERGE_GROUP:-} (merged)"}"
-RP_MERGE_TIMEOUT="${RP_MERGE_TIMEOUT:-120}"
+RP_MERGED_LAUNCH_NAME="${RP_MERGED_LAUNCH_NAME:-"${RP_MERGE_GROUP:-} (merged)"}"
+RP_MERGE_FINALIZE_TIMEOUT="${RP_MERGE_FINALIZE_TIMEOUT:-120}"
 
 # --- Token masking ---
 log() {
@@ -87,7 +88,7 @@ rp_curl_retry() {
 # --- Validation ---
 validate() {
   local missing=()
-  [[ -z "${RP_URL:-}" ]]         && missing+=(RP_URL)
+  [[ -z "${RP_ENDPOINT:-}" ]]     && missing+=(RP_ENDPOINT)
   [[ -z "${RP_PROJECT:-}" ]]     && missing+=(RP_PROJECT)
   [[ -z "${RP_TOKEN:-}" ]]       && missing+=(RP_TOKEN)
   [[ -z "${RP_MERGE_GROUP:-}" ]] && missing+=(RP_MERGE_GROUP)
@@ -106,20 +107,23 @@ validate() {
 }
 
 # --- API helpers ---
-api_v1() { echo "${RP_URL%/}/api/v1/${RP_PROJECT}"; }
-api_v2() { echo "${RP_URL%/}/api/v2/${RP_PROJECT}"; }
+api_v1() { echo "${RP_ENDPOINT%/}/api/v1/${RP_PROJECT}"; }
+api_v2() { echo "${RP_ENDPOINT%/}/api/v2/${RP_PROJECT}"; }
 
-# --- Step 1: Find launches by merge_group attribute ---
+# --- Step 1: Find launches by merge_group (and ci_run_id when set) ---
 find_launches() {
   local url
   url="$(api_v1)/launch?filter.has.attributeKey=merge_group&filter.has.attributeValue=${RP_MERGE_GROUP}&page.size=50"
+  if [[ -n "${RP_CI_RUN_ID:-}" ]]; then
+    url+="&filter.has.attributeKey=ci_run_id&filter.has.attributeValue=${RP_CI_RUN_ID}"
+  fi
   rp_curl_retry -X GET "$url"
 }
 
 # --- Step 2: Poll until launches finish or timeout ---
 wait_for_launches() {
   local ids_json="$1"
-  local deadline=$(( $(date +%s) + RP_MERGE_TIMEOUT ))
+  local deadline=$(( $(date +%s) + RP_MERGE_FINALIZE_TIMEOUT ))
   local all_done=false
 
   while (( $(date +%s) < deadline )); do
@@ -138,7 +142,7 @@ wait_for_launches() {
     sleep 2
   done
 
-  log WARN "Timeout (${RP_MERGE_TIMEOUT}s) waiting for launches to finish"
+  log WARN "Timeout (${RP_MERGE_FINALIZE_TIMEOUT}s) waiting for launches to finish"
   return 1
 }
 
@@ -201,11 +205,11 @@ main() {
   # Merge
   log INFO "Merging $count launches: $(echo "$ids" | jq -c '.')"
   local merge_resp
-  if merge_resp=$(merge_launches "$ids" "$RP_MERGE_NAME"); then
+  if merge_resp=$(merge_launches "$ids" "$RP_MERGED_LAUNCH_NAME"); then
     local merged_id
     merged_id=$(echo "$merge_resp" | jq -r '.id // empty')
     if [[ -n "$merged_id" ]]; then
-      log INFO "Merged launch: ${RP_URL%/}/ui/#${RP_PROJECT}/launches/all/${merged_id}"
+      log INFO "Merged launch: ${RP_ENDPOINT%/}/ui/#${RP_PROJECT}/launches/all/${merged_id}"
       exit 0
     fi
   fi

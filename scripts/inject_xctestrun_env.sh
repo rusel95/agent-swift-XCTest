@@ -45,8 +45,9 @@ if "$PB" -c "Print :TestConfigurations" "$XCTESTRUN_FILE" &>/dev/null; then
     config_idx=$((config_idx + 1))
   done
 else
-  # Flat format: find first key that isn't __xctestrun_metadata__
-  target_key=$("$PB" -c "Print" "$XCTESTRUN_FILE" | grep -E '^\s+\S+ =' | head -20 | sed 's/ =.*//' | tr -d ' ' | grep -v '__xctestrun_metadata__' | head -1)
+  # Flat format: extract first non-metadata top-level key via JSON (stable, handles spaces in names)
+  target_key=$(plutil -convert json -o - "$XCTESTRUN_FILE" 2>/dev/null \
+    | python3 -c "import json,sys; keys=[k for k in json.load(sys.stdin) if k!='__xctestrun_metadata__']; print(keys[0] if keys else '')")
   if [[ -z "$target_key" ]]; then
     echo "Error: Could not find test target in $XCTESTRUN_FILE" >&2
     exit 1

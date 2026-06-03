@@ -17,6 +17,18 @@
 import Foundation
 @preconcurrency import XCTest
 
+extension HTTPClientError {
+    /// A 409 Conflict from the finish-launch endpoint means the launch was already
+    /// finished (idempotent). It is the ONLY non-fatal finalize error; every other HTTP
+    /// status and every non-HTTP error (network, decoding) is fatal and must propagate.
+    var isLaunchAlreadyFinished: Bool {
+        if case .httpError(let statusCode, _) = self, statusCode == 409 {
+            return true
+        }
+        return false
+    }
+}
+
 /// Async/await API for ReportPortal communication (stateless)
 /// Uses LaunchManager and OperationTracker for state management
 public final class ReportingService: Sendable {
@@ -91,7 +103,7 @@ public final class ReportingService: Sendable {
             let _: LaunchFinish = try await httpClient.callEndPoint(endPoint)
             Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
         } catch let error as HTTPClientError {
-            if case .httpError(let statusCode, _) = error, statusCode == 409 {
+            if error.isLaunchAlreadyFinished {
                 Logger.shared.warning("⚠️ Launch finalization returned 409 — launch already finished (idempotent, non-fatal)")
                 return
             }

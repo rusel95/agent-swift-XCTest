@@ -133,23 +133,21 @@ open class RPListener: NSObject, XCTestObservation {
         // This guarantees proper synchronization in parallel execution
         Task {
             await LaunchManager.shared.ensureLaunchStarted {
-                // Collect metadata attributes
-                var attributes: [[String: String]]
-                if let bundle = testBundle as Bundle? {
-                    attributes = MetadataCollector.collectAllAttributes(from: bundle, tags: configuration.tags)
-                } else {
-                    attributes = MetadataCollector.collectDeviceAttributes()
-                }
+                // Collect metadata attributes (collectAllAttributes already includes device attributes)
+                var attributes = MetadataCollector.collectAllAttributes(from: testBundle, tags: configuration.tags)
 
                 // Resolve merge_group for SauceLabs post-run merge support
-                if let group = self.resolveMergeGroup(from: testBundle) {
+                if let group = RPListener.resolveMergeGroup(from: testBundle) {
                     attributes.append(["key": "merge_group", "value": group])
                 }
 
-                // Resolve ci_run_id for concurrent CI run disambiguation
-                let ciRunID = ProcessInfo.processInfo.environment["RP_CI_RUN_ID"]
-                    ?? ProcessInfo.processInfo.environment["GITHUB_RUN_ID"]
-                if let runID = ciRunID, !runID.isEmpty {
+                // Resolve ci_run_id for concurrent CI run disambiguation.
+                // Pick the first non-empty value: an explicitly empty RP_CI_RUN_ID must not
+                // suppress the GITHUB_RUN_ID fallback.
+                let env = ProcessInfo.processInfo.environment
+                if let runID = [env["RP_CI_RUN_ID"], env["GITHUB_RUN_ID"]]
+                    .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) })
+                    .first(where: { !$0.isEmpty }) {
                     attributes.append(["key": "ci_run_id", "value": runID])
                 }
 
@@ -738,7 +736,7 @@ open class RPListener: NSObject, XCTestObservation {
             // ReportPortal will calculate the final status from all test results
             Logger.shared.info("📊 Finalizing launch \(launchID)")
 
-            let skipFinish = self.resolveSkipFinish(from: testBundle)
+            let skipFinish = RPListener.resolveSkipFinish(from: testBundle)
             if skipFinish {
                 Logger.shared.info("⏭️ RP_SKIP_FINISH is set — skipping launch finalization")
                 Logger.shared.info("📋 Launch ID for manual/script finalization: \(launchID)")
@@ -779,13 +777,14 @@ open class RPListener: NSObject, XCTestObservation {
 
     // MARK: - SauceLabs Merge Support
 
-    /// Resolve mergeGroup: (1) RP_MERGE_GROUP env var, (2) ReportPortalMergeGroup Info.plist
-    func resolveMergeGroup(from testBundle: Bundle) -> String? {
+    /// Resolve mergeGroup: (1) RP_MERGE_GROUP env var, (2) ReportPortalMergeGroup Info.plist.
+    /// Static so it can be unit-tested without instantiating an observer.
+    static func resolveMergeGroup(from testBundle: Bundle?) -> String? {
         if let envValue = ProcessInfo.processInfo.environment["RP_MERGE_GROUP"], !envValue.isEmpty {
             Logger.shared.info("📎 merge_group from env var: \(envValue)")
             return envValue
         }
-        if let plistValue = testBundle.object(forInfoDictionaryKey: "ReportPortalMergeGroup") as? String,
+        if let plistValue = testBundle?.object(forInfoDictionaryKey: "ReportPortalMergeGroup") as? String,
            !plistValue.isEmpty {
             Logger.shared.info("📎 merge_group from Info.plist: \(plistValue)")
             return plistValue
@@ -793,18 +792,38 @@ open class RPListener: NSObject, XCTestObservation {
         return nil
     }
 
-    /// Resolve skipFinish: (1) RP_SKIP_FINISH env var, (2) ReportPortalSkipFinish Info.plist, (3) false
-    func resolveSkipFinish(from testBundle: Bundle?) -> Bool {
-        if let envValue = ProcessInfo.processInfo.environment["RP_SKIP_FINISH"], !envValue.isEmpty {
-            Logger.shared.info("⏭️ skipFinish from env var: true")
-            return true
+    /// Resolve skipFinish: (1) RP_SKIP_FINISH env var, (2) ReportPortalSkipFinish Info.plist, (3) false.
+    /// Accepts both String ("true"/"yes"/"1" vs "false"/"no"/"0") and Boolean values so that an
+    /// explicit RP_SKIP_FINISH=false is honored, and a String "YES" in Info.plist is not silently
+    /// ignored. Static so it can be unit-tested without instantiating an observer.
+    static func resolveSkipFinish(from testBundle: Bundle?) -> Bool {
+        if let envValue = ProcessInfo.processInfo.environment["RP_SKIP_FINISH"],
+           let parsed = parseBoolFlag(envValue) {
+            Logger.shared.info("⏭️ skipFinish from env var: \(parsed)")
+            return parsed
         }
-        if let bundle = testBundle,
-           let plistValue = bundle.object(forInfoDictionaryKey: "ReportPortalSkipFinish") as? Bool,
-           plistValue {
-            Logger.shared.info("⏭️ skipFinish from Info.plist: true")
-            return true
+        if let plistValue = testBundle?.object(forInfoDictionaryKey: "ReportPortalSkipFinish"),
+           let parsed = parseBoolFlag(plistValue) {
+            Logger.shared.info("⏭️ skipFinish from Info.plist: \(parsed)")
+            return parsed
         }
         return false
+    }
+
+    /// Parse a boolean from a Bool/NSNumber or a String ("true"/"yes"/"1" → true,
+    /// "false"/"no"/"0" → false). Returns nil when absent or unrecognized, so the next
+    /// resolution tier (Info.plist, then the default) applies.
+    static func parseBoolFlag(_ value: Any?) -> Bool? {
+        if let boolValue = value as? Bool {
+            return boolValue
+        }
+        if let stringValue = value as? String {
+            switch stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "true", "yes", "1": return true
+            case "false", "no", "0": return false
+            default: return nil
+            }
+        }
+        return nil
     }
 }

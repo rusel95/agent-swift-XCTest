@@ -31,14 +31,29 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup build enviroment
         uses: ./.github/actions/setup-build-env
 
       - name: Lint Pod
         run: |
-          pod lib lint --allow-warnings
+          # Lint iOS only: the podspec also declares tvOS/macOS, but the runner has no
+          # matching tvOS simulator destination, which fails the lint. iOS is the platform
+          # CocoaPods consumers actually use for this XCTest agent.
+          pod lib lint --allow-warnings --platforms=ios
+
+  script-tests:
+    name: Shell script self-tests
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run merge & inject script tests
+        run: |
+          bash scripts/tests/test_merge_script.sh
+          bash scripts/tests/test_inject_xctestrun.sh
 
   build:
     name: Build default scheme using any available iPhone simulator
@@ -46,7 +61,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Set Default Scheme
         run: |
           scheme_list=$(xcodebuild -list -json | tr -d "\n")

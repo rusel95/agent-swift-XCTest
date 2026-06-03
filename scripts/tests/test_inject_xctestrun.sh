@@ -85,6 +85,31 @@ else
   fail "overwrite existing key (rc=$rc, found=$found)"
 fi
 
+# --- Test 6: Value with spaces is injected (double-quote wrapping) ---
+output=$("$INJECT_SCRIPT" "$PLIST" "RP_MERGE_GROUP" "Nightly Regression" 2>&1) && rc=$? || rc=$?
+found=$("$PB" -c "Print" "$PLIST" 2>/dev/null | grep -cF -- "RP_MERGE_GROUP = Nightly Regression" || true)
+if [[ $rc -eq 0 && "$found" -gt 0 ]]; then
+  pass "value with spaces is injected"
+else
+  fail "value with spaces is injected (rc=$rc, found=$found, output: $output)"
+fi
+
+# --- Test 7: Single-quote value is rejected with a clear error ---
+output=$("$INJECT_SCRIPT" "$PLIST" "RP_X" "it's-bad" 2>&1) && rc=$? || rc=$?
+if [[ $rc -eq 1 ]] && echo "$output" | grep -q "single quote"; then
+  pass "single-quote value is rejected"
+else
+  fail "single-quote value is rejected (rc=$rc, output: $output)"
+fi
+
+# --- Test 8: Invalid environment variable name is rejected ---
+output=$("$INJECT_SCRIPT" "$PLIST" "bad-key!" "v" 2>&1) && rc=$? || rc=$?
+if [[ $rc -eq 1 ]] && echo "$output" | grep -q "valid environment variable name"; then
+  pass "invalid key is rejected"
+else
+  fail "invalid key is rejected (rc=$rc, output: $output)"
+fi
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

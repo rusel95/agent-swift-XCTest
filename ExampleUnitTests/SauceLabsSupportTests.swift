@@ -18,24 +18,14 @@ import XCTest
 // MARK: - resolveMergeGroup / resolveSkipFinish Tests
 
 /// Tests for SauceLabs merge support: merge_group and skipFinish resolution.
-/// These methods resolve configuration from env vars → Info.plist → default.
+/// These are pure *static* resolvers (env var → Info.plist → default), so they are
+/// exercised without instantiating `RPListener` — instantiating it would register a
+/// process-global `XCTestObservation` observer that never gets removed.
 ///
-/// Note: Environment variables are process-global and cannot be set/unset in Swift.
-/// Tests validate the Info.plist fallback and nil-bundle paths.
-/// The env var priority path is validated by ValidationTest on SauceLabs real devices.
+/// Environment variables are process-global and cannot be set/unset from Swift, so the
+/// env-var priority path is validated by `ValidationTest` on SauceLabs real devices; here
+/// we cover the Info.plist fallback, nil-bundle, and value-parsing paths.
 final class SauceLabsSupportTests: XCTestCase {
-
-    private var listener: RPListener!
-
-    override func setUp() {
-        super.setUp()
-        listener = RPListener()
-    }
-
-    override func tearDown() {
-        listener = nil
-        super.tearDown()
-    }
 
     // MARK: - resolveMergeGroup
 
@@ -43,15 +33,20 @@ final class SauceLabsSupportTests: XCTestCase {
         try XCTSkipIf(ProcessInfo.processInfo.environment["RP_MERGE_GROUP"] != nil,
                       "RP_MERGE_GROUP env var is set; env-var path tested on SauceLabs real devices")
         let bundle = Bundle(for: type(of: self))
-        let result = listener.resolveMergeGroup(from: bundle)
-        XCTAssertNil(result, "Should return nil when neither env var nor Info.plist key is set")
+        XCTAssertNil(RPListener.resolveMergeGroup(from: bundle),
+                     "Should return nil when neither env var nor Info.plist key is set")
     }
 
     func testResolveMergeGroup_MainBundle_ReturnsNil() throws {
         try XCTSkipIf(ProcessInfo.processInfo.environment["RP_MERGE_GROUP"] != nil,
                       "RP_MERGE_GROUP env var is set; env-var path tested on SauceLabs real devices")
-        let result = listener.resolveMergeGroup(from: Bundle.main)
-        XCTAssertNil(result)
+        XCTAssertNil(RPListener.resolveMergeGroup(from: Bundle.main))
+    }
+
+    func testResolveMergeGroup_NilBundle_ReturnsNil() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["RP_MERGE_GROUP"] != nil,
+                      "RP_MERGE_GROUP env var is set; env-var path tested on SauceLabs real devices")
+        XCTAssertNil(RPListener.resolveMergeGroup(from: nil))
     }
 
     // MARK: - resolveSkipFinish
@@ -60,66 +55,83 @@ final class SauceLabsSupportTests: XCTestCase {
         try XCTSkipIf(ProcessInfo.processInfo.environment["RP_SKIP_FINISH"] != nil,
                       "RP_SKIP_FINISH env var is set; env-var path tested on SauceLabs real devices")
         let bundle = Bundle(for: type(of: self))
-        let result = listener.resolveSkipFinish(from: bundle)
-        XCTAssertFalse(result, "Should return false when neither env var nor Info.plist key is set")
+        XCTAssertFalse(RPListener.resolveSkipFinish(from: bundle),
+                       "Should return false when neither env var nor Info.plist key is set")
     }
 
     func testResolveSkipFinish_NilBundle_ReturnsFalse() throws {
         try XCTSkipIf(ProcessInfo.processInfo.environment["RP_SKIP_FINISH"] != nil,
                       "RP_SKIP_FINISH env var is set; env-var path tested on SauceLabs real devices")
-        let result = listener.resolveSkipFinish(from: nil)
-        XCTAssertFalse(result, "Should return false when bundle is nil")
+        XCTAssertFalse(RPListener.resolveSkipFinish(from: nil), "Should return false when bundle is nil")
     }
 
     func testResolveSkipFinish_MainBundle_ReturnsFalse() throws {
         try XCTSkipIf(ProcessInfo.processInfo.environment["RP_SKIP_FINISH"] != nil,
                       "RP_SKIP_FINISH env var is set; env-var path tested on SauceLabs real devices")
-        let result = listener.resolveSkipFinish(from: Bundle.main)
-        XCTAssertFalse(result, "Should return false for main bundle without plist key")
+        XCTAssertFalse(RPListener.resolveSkipFinish(from: Bundle.main),
+                       "Should return false for main bundle without plist key")
+    }
+
+    // MARK: - parseBoolFlag (String/Bool tolerance — the core of the skipFinish fix)
+
+    func testParseBoolFlag_TruthyStrings() {
+        for value in ["true", "TRUE", "Yes", "yes", "1", " true "] {
+            XCTAssertEqual(RPListener.parseBoolFlag(value), true, "\"\(value)\" should parse as true")
+        }
+    }
+
+    func testParseBoolFlag_FalsyStrings() {
+        // The regression this guards: "false"/"no"/"0" must NOT be treated as true.
+        for value in ["false", "FALSE", "No", "no", "0", " false "] {
+            XCTAssertEqual(RPListener.parseBoolFlag(value), false, "\"\(value)\" should parse as false")
+        }
+    }
+
+    func testParseBoolFlag_BoolValues() {
+        XCTAssertEqual(RPListener.parseBoolFlag(true), true)
+        XCTAssertEqual(RPListener.parseBoolFlag(false), false)
+    }
+
+    func testParseBoolFlag_UnrecognizedReturnsNil() {
+        XCTAssertNil(RPListener.parseBoolFlag("maybe"))
+        XCTAssertNil(RPListener.parseBoolFlag(""))
+        XCTAssertNil(RPListener.parseBoolFlag(nil))
     }
 }
 
 // MARK: - finalizeLaunch 409-only Non-Fatal Tests
 
-/// Tests that verify finalizeLaunch treats only 409 as non-fatal (idempotent already-finished).
-/// All other HTTP errors — including other 4xx and all 5xx — must propagate.
+/// Verifies the predicate that `ReportingService.finalizeLaunch` uses: only HTTP 409
+/// (launch already finished) is non-fatal; every other HTTP status and every non-HTTP
+/// error is fatal and must propagate.
 final class IdempotentFinalizeLaunchTests: XCTestCase {
 
     func testHTTPClientError_409_IsNonFatal() {
-        // 409 Conflict = launch already finished; must match the non-fatal check
-        let error = HTTPClientError.httpError(statusCode: 409, body: "already finished")
-        if case .httpError(let statusCode, _) = error {
-            XCTAssertEqual(statusCode, 409, "409 should be the only non-fatal status code")
-        }
+        XCTAssertTrue(HTTPClientError.httpError(statusCode: 409, body: "already finished").isLaunchAlreadyFinished,
+                      "409 is the only non-fatal finalize status")
     }
 
     func testHTTPClientError_OtherClientErrors_AreFatal() {
-        // 400, 401, 403, 422 must NOT match the 409-only non-fatal check
-        for code in [400, 401, 403, 422] {
-            let error = HTTPClientError.httpError(statusCode: code, body: "error")
-            if case .httpError(let statusCode, _) = error {
-                XCTAssertNotEqual(statusCode, 409,
-                    "Status \(code) should NOT be treated as non-fatal (only 409 is)")
-            }
+        for code in [400, 401, 403, 404, 422] {
+            XCTAssertFalse(HTTPClientError.httpError(statusCode: code, body: "error").isLaunchAlreadyFinished,
+                           "Status \(code) must be fatal (only 409 is non-fatal)")
         }
     }
 
     func testHTTPClientError_5xx_AreFatal() {
-        // 5xx server errors must NOT match the 409-only non-fatal check
         for code in [500, 502, 503] {
-            let error = HTTPClientError.httpError(statusCode: code, body: "server error")
-            if case .httpError(let statusCode, _) = error {
-                XCTAssertNotEqual(statusCode, 409,
-                    "Status \(code) should NOT be treated as non-fatal")
-            }
+            XCTAssertFalse(HTTPClientError.httpError(statusCode: code, body: "server error").isLaunchAlreadyFinished,
+                           "Status \(code) must be fatal")
         }
     }
 
-    func testHTTPClientError_NetworkError_IsNotHTTPError() {
-        // Network errors must not match the httpError pattern
-        let error = HTTPClientError.networkError(NSError(domain: "test", code: -1))
-        if case .httpError = error {
-            XCTFail("Network error should not match httpError pattern")
-        }
+    func testHTTPClientError_NetworkError_IsFatal() {
+        XCTAssertFalse(HTTPClientError.networkError(NSError(domain: "test", code: -1)).isLaunchAlreadyFinished,
+                       "Network errors must propagate")
+    }
+
+    func testHTTPClientError_DecodingError_IsFatal() {
+        XCTAssertFalse(HTTPClientError.decodingError("bad json").isLaunchAlreadyFinished,
+                       "Decoding errors must propagate")
     }
 }

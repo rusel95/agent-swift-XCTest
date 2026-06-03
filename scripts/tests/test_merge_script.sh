@@ -14,18 +14,21 @@ trap cleanup EXIT
 pass() { PASS=$((PASS + 1)); echo "PASS: $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "FAIL: $1"; }
 
-# --- Create mock curl ---
+# --- Mock curl: emulates `-o <file>` (writes body) + `-w '%{http_code}'` (prints code). ---
+# Returns an empty-launches list for any request so the script deterministically reaches its
+# "nothing to merge" path with no network access.
 MOCK_CURL="${TMPDIR_TEST}/curl"
 cat > "$MOCK_CURL" <<'MOCK'
 #!/usr/bin/env bash
-# Mock curl: return empty launches response for any GET request
+out=""
+prev=""
 for arg in "$@"; do
-  if [[ "$arg" == *"/launch?"* ]]; then
-    echo '{"content":[],"page":{"totalElements":0}}'
-    exit 0
-  fi
+  [[ "$prev" == "-o" ]] && out="$arg"
+  prev="$arg"
 done
-echo '{}'
+body='{"content":[],"page":{"totalElements":0}}'
+[[ -n "$out" ]] && printf '%s' "$body" > "$out"
+printf '200'   # value captured by -w '%{http_code}'
 exit 0
 MOCK
 chmod +x "$MOCK_CURL"
@@ -42,15 +45,15 @@ else
   fail "missing params exits 3 (got rc=$rc)"
 fi
 
-# --- Test 2: Zero launches found → exit 1 ---
+# --- Test 2: Zero launches found → exit 0 (nothing to merge is not a failure) ---
 output=$(RP_ENDPOINT="https://rp.example.com" RP_PROJECT="proj" \
   RP_TOKEN="secret_token_value" RP_MERGE_GROUP="test-group" \
-  RP_MERGE_FINALIZE_TIMEOUT=1 \
+  RP_CI_RUN_ID="" GITHUB_RUN_ID="" RP_MERGE_FINALIZE_TIMEOUT=1 \
   "$MERGE_SCRIPT" 2>&1) && rc=$? || rc=$?
-if [[ $rc -eq 1 ]]; then
-  pass "zero launches exits 1"
+if [[ $rc -eq 0 ]]; then
+  pass "zero launches exits 0"
 else
-  fail "zero launches exits 1 (got rc=$rc)"
+  fail "zero launches exits 0 (got rc=$rc, output: $output)"
 fi
 
 # --- Test 3: Token never appears in output ---
@@ -58,6 +61,17 @@ if echo "$output" | grep -qF "secret_token_value"; then
   fail "token masked in output (token found in output)"
 else
   pass "token masked in output"
+fi
+
+# --- Test 4: Non-numeric RP_MERGE_FINALIZE_TIMEOUT is sanitized, not fatal ---
+output=$(RP_ENDPOINT="https://rp.example.com" RP_PROJECT="proj" \
+  RP_TOKEN="secret123" RP_MERGE_GROUP="grp" \
+  RP_CI_RUN_ID="" GITHUB_RUN_ID="" RP_MERGE_FINALIZE_TIMEOUT="60s" \
+  "$MERGE_SCRIPT" 2>&1) && rc=$? || rc=$?
+if [[ $rc -eq 0 ]] && echo "$output" | grep -q "not an integer"; then
+  pass "non-numeric timeout is sanitized (exit 0 + warning)"
+else
+  fail "non-numeric timeout is sanitized (got rc=$rc, output: $output)"
 fi
 
 # --- Summary ---

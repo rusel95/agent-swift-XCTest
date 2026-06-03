@@ -1,281 +1,277 @@
-# XCTest Agent for ReportPortal
+# ReportPortal Agent for XCTest
 
+> Real-time reporting of XCTest / XCUITest runs to [ReportPortal](https://reportportal.io) — with first-class **parallel execution** and **SauceLabs multi-device merge** support.
 
 [![CocoaPods](https://img.shields.io/cocoapods/v/ReportPortal.svg?style=flat)](http://cocoapods.org/pods/ReportPortal)
+[![Swift Package Manager](https://img.shields.io/badge/SPM-compatible-brightgreen.svg?style=flat)](https://swift.org/package-manager/)
+[![Swift](https://img.shields.io/badge/Swift-5.5%2B-orange.svg?style=flat)](https://swift.org)
 [![Platform](https://img.shields.io/cocoapods/p/ReportPortal.svg?style=flat)](http://cocoapods.org/pods/ReportPortal)
 [![Validate](https://github.com/reportportal/agent-swift-XCTest/actions/workflows/validate.yml/badge.svg)](https://github.com/reportportal/agent-swift-XCTest/actions/workflows/validate.yml)
-[![Join Slack chat!](https://img.shields.io/badge/slack-join-brightgreen.svg)](https://slack.epmrpp.reportportal.io/)
-[![stackoverflow](https://img.shields.io/badge/reportportal-stackoverflow-orange.svg?style=flat)](http://stackoverflow.com/questions/tagged/reportportal)
-[![Build with Love](https://img.shields.io/badge/build%20with-❤%EF%B8%8F%E2%80%8D-lightgrey.svg)](http://reportportal.io?style=flat)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Slack](https://img.shields.io/badge/slack-join-brightgreen.svg)](https://slack.epmrpp.reportportal.io/)
+[![StackOverflow](https://img.shields.io/badge/reportportal-stackoverflow-orange.svg?style=flat)](http://stackoverflow.com/questions/tagged/reportportal)
+
+The agent hooks into XCTest via [`XCTestObservation`](https://developer.apple.com/documentation/xctest/xctestobservation) and streams your suites, test cases, statuses, logs, and attachments to a ReportPortal launch as they run — no changes to your test code required.
+
+---
+
+## Contents
+
+- [Features](#features)
+- [Compatibility](#compatibility)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration Reference](#configuration-reference)
+- [Parallel Test Execution (v4.0+)](#parallel-test-execution-v40)
+- [SauceLabs Real-Device Merge](#saucelabs-real-device-merge)
+- [How It Works](#how-it-works)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [Authors](#authors)
+- [License](#license)
+
+---
+
+## Features
+
+- 📡 **Zero-touch reporting** — add the agent as your test target's principal class; no test-code changes.
+- 🧱 **Full hierarchy** — launches → suites → test cases, with statuses, durations, logs, and attachments.
+- ⚡ **Parallel-execution ready (v4.0+)** — multiple simulator clones/devices report into a single launch via a shared `RP_LAUNCH_UUID`.
+- ☁️ **SauceLabs real-device merge** — each isolated device creates its own launch; a post-run script merges them into one ([guide](docs/SAUCELABS_SETUP.md)).
+- 🧩 **Flexible configuration** — env vars override `Info.plist`, with sensible defaults.
+- 🏷️ **Metadata & tags** — device/OS attributes, custom tags, and test-plan-aware launch names.
+- 🔁 **Idempotent finalize** — a launch already finished (HTTP 409) is treated as success, not an error.
+
+## Compatibility
+
+| | Minimum |
+|---|---|
+| Swift | 5.5 |
+| Xcode | 13 |
+| iOS | 15.0 |
+| macOS | 12.0 |
+| tvOS | 15.0 |
+| watchOS | 8.0 |
+| ReportPortal | 5.0 (API v2; merge endpoint requires 5.0+) |
+
+> Parallel execution relies on Swift Concurrency, hence the iOS 15 / Swift 5.5 floor.
 
 ## Installation
 
-ReportPortalAgent is available through [CocoaPods](http://cocoapods.org). To install
-it, simply add the following line to your Podfile:
+### Swift Package Manager (recommended)
+
+In Xcode: **File → Add Package Dependencies…**, enter the repository URL, and add the **`ReportPortalAgent`** library to your **test** target.
+
+```
+https://github.com/reportportal/agent-swift-XCTest.git
+```
+
+Or in `Package.swift`:
+
+```swift
+.package(url: "https://github.com/reportportal/agent-swift-XCTest.git", from: "4.0.0")
+```
+
+```swift
+.testTarget(
+    name: "YourUITests",
+    dependencies: [.product(name: "ReportPortalAgent", package: "agent-swift-XCTest")]
+)
+```
+
+### CocoaPods
 
 ```ruby
 pod 'ReportPortal'
 ```
-and install it:
+
 ```bash
-cd <project>
 pod install
 ```
 
-Also available through SPM by name "agent-swift-xctest" or URL of current repo
+## Quick Start
 
-## Report Portal properties
+**1. Give your test target an `Info.plist`.** If it doesn't have one, create `YourTests/Info.plist` and set the target's *Info.plist File* build setting to that path.
 
-The properties for Report Portal configuration should be set in the `Info.plist` file of your Test Target. If you Test Target does't have an `Info.plist`, follow these steps to add:
+**2. Add the ReportPortal keys** (see the [full reference](#configuration-reference)):
 
-1. In your Test Target Folder, create a Property List named `Info.plist`.
-2. In Test Target Settings, configure 'Info.plist File' with the path `TestTargetFolderName/Info.plist`.
+```xml
+<key>NSPrincipalClass</key>
+<string>ReportPortalAgent.RPListener</string>   <!-- CocoaPods: ReportPortal.RPListener -->
 
-Now, you can specify the Report Portal properties:
+<key>PushTestDataToReportPortal</key>
+<true/>
+<key>ReportPortalURL</key>
+<string>https://reportportal.example.com</string>  <!-- base URL; /api/v2/{project} is appended -->
+<key>ReportPortalProjectName</key>
+<string>your_project</string>
+<key>ReportPortalToken</key>
+<string>your_api_token</string>
+<key>ReportPortalLaunchName</key>
+<string>Regression</string>
+```
 
-* ReportPortalURL - Base URL of your ReportPortal instance (example: https://report-portal.company.com). The agent automatically appends `/api/v2/{project}` to construct the full API URL.
-* ReportPortalToken - token for authentication which you can get from RP account settings.
-* ReportPortalLaunchName - name of launch.
-* Principal class - use `ReportPortalAgent.RPListener` from ReportPortalAgent lib for SPM or `ReportPortal.RPListener` for CocoaPods. You can also specify your own Observer which should conform to [XCTestObservation](https://developer.apple.com/documentation/xctest/xctestobservation) protocol.
-* PushTestDataToReportPortal - can be used to switch off/on reporting
-* ReportPortalProjectName - project name from Report Portal
-* ReportPortalTags(optional) - can be used to specify tags, separated by comma.
+![Info.plist example](./Example.png)
 
-Example:
-![Alt text](./Example.png)
+**3. Run your tests** as usual (`xcodebuild test …` or ⌘U). A launch appears in ReportPortal in real time.
 
-## Optional: Test Plan Name visibility
+## Configuration Reference
 
-To include test plan names in ReportPortal, add the `TEST_PLAN_NAME` environment variable to your `.xctestplan` file manually:
+### `Info.plist` keys
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `NSPrincipalClass` | String | ✅ | `ReportPortalAgent.RPListener` (SPM) or `ReportPortal.RPListener` (CocoaPods). May be your own `XCTestObservation`. |
+| `PushTestDataToReportPortal` | Bool **or** String | ✅ | Master on/off switch. `true`/`yes`/`1` enable reporting. |
+| `ReportPortalURL` | String | ✅ | Base URL of your instance. The agent appends `/api/v2/{project}`. |
+| `ReportPortalProjectName` | String | ✅ | ReportPortal project name. |
+| `ReportPortalToken` | String | ✅ | API token (from RP account settings). |
+| `ReportPortalLaunchName` | String | ✅ | Launch name. |
+| `ReportPortalTags` | String | — | Comma-separated tags. |
+| `IsDebugLaunchMode` | Bool | — | Marks the launch as debug mode. |
+| `TestNameRules` | Dict | — | Display-name transforms (see below). |
+| `ReportPortalMergeGroup` | String | — | Tags launches for SauceLabs post-run merge. |
+| `ReportPortalSkipFinish` | Bool **or** String | — | Defers launch finalization to the merge script. |
+
+### Environment variables
+
+Env vars take priority over `Info.plist` (useful in CI where `Info.plist` is baked at build time):
+
+| Variable | Purpose |
+|----------|---------|
+| `RP_LAUNCH_UUID` | Shared launch UUID so parallel workers report into **one** launch. |
+| `RP_MERGE_GROUP` | Overrides `ReportPortalMergeGroup`. |
+| `RP_SKIP_FINISH` | Overrides `ReportPortalSkipFinish` (`true`/`yes`/`1` vs `false`/`no`/`0`). |
+| `RP_CI_RUN_ID` | Disambiguates concurrent CI runs; falls back to `GITHUB_RUN_ID`. |
+| `TEST_PLAN_NAME` | Appends the test-plan name to the launch name. |
+
+### `TestNameRules`
+
+```xml
+<key>TestNameRules</key>
+<dict>
+    <key>StripTestPrefix</key><true/>          <!-- testLoginWorks → LoginWorks -->
+    <key>WhiteSpaceOnUnderscore</key><true/>   <!-- login_works   → login works -->
+    <key>WhiteSpaceOnCamelCase</key><true/>    <!-- LoginWorks     → Login Works -->
+</dict>
+```
+
+### Test plan name in the launch name
+
+Add `TEST_PLAN_NAME` to your `.xctestplan` (or override per-run in CI) to get launch names like `Regression: Smoke_Tests`:
 
 ```json
-{
-  "defaultOptions": {
-    "environmentVariableEntries": [
-      {
-        "key": "TEST_PLAN_NAME",
-        "value": "Example Test Plan"
-      }
-    ]
-  }
-}
+{ "defaultOptions": { "environmentVariableEntries": [ { "key": "TEST_PLAN_NAME", "value": "Smoke Tests" } ] } }
 ```
-Or in XCode:
-![Alt text](./TEST_PLAN_NAME.png)
 
-**Result:** Launch names will appear as `YourLaunchName: Example_Test_Plan` in ReportPortal.
+```bash
+TEST_PLAN_NAME="Nightly" xcodebuild test …   # CI override
+```
 
-**Note:** Spaces in test plan names are automatically replaced with underscores for better compatibility.
-
-**CI Override:** CI can override this value: `TEST_PLAN_NAME="Nightly Tests" xcodebuild test ...`
+Spaces are replaced with underscores for compatibility.
 
 ## Parallel Test Execution (v4.0+)
 
-Starting with v4.0, the agent fully supports **parallel test execution**, allowing you to dramatically reduce CI/CD pipeline times. Tests can be executed across multiple simulator instances simultaneously while maintaining proper test hierarchy and reporting in ReportPortal.
-
-### Requirements
-
-- **iOS 15.0+** / **macOS 14.0+** (required for Swift Concurrency)
-- **Swift 5.5+**
-- **Xcode 13+**
-
-### Configuration
-
-Parallel execution is controlled via `xcodebuild` command-line arguments. No `.xctestplan` modifications are required.
-
-#### Run Tests with Parallel Execution
-
-**Option A: Single Device Type (Multiple Clones)**
-
-This approach clones the same simulator multiple times. Best for consistent test environments:
+Run tests across multiple simulators simultaneously to cut pipeline time, while preserving the test hierarchy in ReportPortal.
 
 ```bash
-xcodebuild test \
-  -scheme YourScheme \
-  -testPlan YourTestPlan \
+# Option A — clone one device type N times
+xcodebuild test -scheme YourScheme -testPlan YourPlan \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
-  -parallel-testing-enabled YES \
-  -maximum-parallel-testing-workers 4
-```
+  -parallel-testing-enabled YES -maximum-parallel-testing-workers 4
 
-This will create 4 simulator clones: `iPhone 16 - Clone 1`, `iPhone 16 - Clone 2`, etc.
-
-**Option B: Multiple Device Types (Explicit Devices)**
-
-Run tests across different device models simultaneously. Great for device coverage:
-
-```bash
-xcodebuild test \
-  -scheme YourScheme \
-  -testPlan YourTestPlan \
+# Option B — explicit device matrix
+xcodebuild test -scheme YourScheme -testPlan YourPlan \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
   -destination 'platform=iOS Simulator,name=iPhone 15 Pro' \
-  -destination 'platform=iOS Simulator,name=iPhone 15' \
-  -destination 'platform=iOS Simulator,name=iPhone 14' \
   -parallel-testing-enabled YES
 ```
 
-**Option C: GitHub Actions Example**
+### One shared launch in CI
 
-```yaml
-- name: Run Tests in Parallel
-  run: |
-    xcodebuild test \
-      -scheme MyApp \
-      -testPlan MyTestPlan \
-      -parallel-testing-enabled YES \
-      -maximum-parallel-testing-workers 2 \
-      -resultBundlePath TestResults.xcresult
-```
-
-**Option D: Bitrise Example**
-
-```yaml
-- xcode-test@4:
-    inputs:
-      - scheme: MyApp
-      - test_plan: MyTestPlan
-      - simulator_device: iPhone 16
-```
-
-### CI/CD: Single Shared Launch (Recommended)
-
-By default, parallel execution creates **separate launches per worker** (e.g., 4 workers = 4 launches in ReportPortal). In local development, this is acceptable (you can manually merge launches in ReportPortal UI).
-
-For CI/CD pipelines, you can configure **all workers to report to a single shared launch** using the `RP_LAUNCH_UUID` environment variable:
+By default each worker creates its **own** launch. To report all workers into a **single** launch, export a shared UUID **before** the test run:
 
 ```bash
-# Generate UUID and run tests with shared launch
 export RP_LAUNCH_UUID=$(uuidgen)
-
-xcodebuild test \
-  -scheme YourScheme \
-  -testPlan YourTestPlan \
-  -destination 'platform=iOS Simulator,name=iPhone 16' \
-  -parallel-testing-enabled YES \
-  -maximum-parallel-testing-workers 4
+xcodebuild test -scheme YourScheme -testPlan YourPlan \
+  -parallel-testing-enabled YES -maximum-parallel-testing-workers 4
 ```
 
-**How it works:**
-1. `export RP_LAUNCH_UUID=$(uuidgen)` sets a shared UUID **before** running tests
-2. All parallel workers read the **same UUID** from environment
-3. First worker creates the launch in ReportPortal
-4. Other workers join the existing launch (409 Conflict handled automatically)
-5. Result: **Single launch** in ReportPortal containing all test results
+The first worker creates the launch; the others join it (HTTP 409 is handled as success).
 
-**Why NOT use build phase scripts for UUID generation:**
+> ⚠️ **Don't generate the UUID in a build-phase script.** Build phases only run when sources change, so a re-run without code changes reuses a stale UUID and joins the previous run's (already-finished) launch. Always set `RP_LAUNCH_UUID` from the shell/CI before `xcodebuild`.
 
-Build phase scripts only run when **source files change** (Xcode incremental build). If you re-run tests without code changes, the UUID stays stale and workers join the **previous test run's launch**, causing data corruption.
+### Worker-count guidance
+
+| Environment | Workers |
+|-------------|---------|
+| Local (8+ cores) | 4 |
+| Local (4–6 cores) | 2–3 |
+| GitHub Actions | 2 |
+| Self-hosted (cores N) | N / 2 |
+
+For local Xcode runs that produce separate launches, you can also merge them by hand in **ReportPortal → Launches → Merge**.
+
+![Merge example](./example_merge.png)
+
+## SauceLabs Real-Device Merge
+
+SauceLabs real devices are isolated — they share neither a filesystem nor environment variables, so the simulator-style shared-UUID approach can't work. Instead each device creates its own launch (tagged with a `merge_group`), defers finalization (`ReportPortalSkipFinish`), and a post-run script merges them into one launch.
 
 ```bash
-# ❌ DON'T DO THIS - Build phases don't run on every test execution!
-# Build Phase → Run Script:
-UUID=$(uuidgen)
-/usr/libexec/PlistBuddy -c "Set :RP_LAUNCH_UUID $UUID" Info.plist
+# After all SauceLabs shards finish:
+RP_ENDPOINT=… RP_PROJECT=… RP_TOKEN=… RP_MERGE_GROUP="regression-${GITHUB_RUN_ID}" \
+  scripts/merge_rp_launches.sh
 ```
 
-**Timeline showing the problem:**
-```
-10:00 - Run tests → Build runs → UUID-AAA generated → Launch created ✅
-10:05 - Re-run tests → NO BUILD → Still UUID-AAA → Joins old launch ❌
-10:10 - Re-run tests → NO BUILD → Still UUID-AAA → ERROR: Launch already finalized ❌
-10:15 - Change code → Build runs → UUID-BBB generated → New launch ✅
-```
+👉 Full setup, configuration, CI examples, **and the QA validation playbook** live in **[docs/SAUCELABS_SETUP.md](docs/SAUCELABS_SETUP.md)** and **[docs/GITHUB_ACTIONS_EXAMPLES.md](docs/GITHUB_ACTIONS_EXAMPLES.md)**.
 
-**Solution:** Use environment variables set by CI/CD pipeline (always fresh, always unique per test run).
-
-### Local Development: Multiple Launches
-
-In local development (Xcode IDE), each parallel worker creates a **separate launch**:
+## How It Works
 
 ```
-ReportPortal Dashboard:
-├── MyApp Tests - iPhone 16 Clone 1 (Worker 1)
-├── MyApp Tests - iPhone 16 Clone 2 (Worker 2)
-├── MyApp Tests - iPhone 16 Clone 3 (Worker 3)
-└── MyApp Tests - iPhone 16 Clone 4 (Worker 4)
+XCTest run
+   │  XCTestObservation callbacks
+   ▼
+RPListener ──► LaunchManager        (launch identity: shared RP_LAUNCH_UUID or per-worker UUID; 409 = already exists)
+   │            │
+   │            ▼
+   └─────────► ReportingService ──► HTTPClient ──► ReportPortal API v2
+                (async/await, stateless suite/test/log calls)
 ```
 
-**To run with a single shared launch locally (via script):**
+- **`RPListener`** — the `XCTestObservation` entry point; resolves configuration and translates test events into API calls.
+- **`LaunchManager`** — owns launch identity and guarantees the launch is created exactly once across parallel workers.
+- **`ReportingService`** — stateless async/await wrapper over the ReportPortal v2 API.
+- **Idempotency** — joining an existing launch and finalizing an already-finished launch (HTTP 409) are both treated as success.
+
+## Documentation
+
+| Doc | What it covers |
+|-----|----------------|
+| [docs/SAUCELABS_SETUP.md](docs/SAUCELABS_SETUP.md) | Full SauceLabs setup, configuration reference, troubleshooting, and the QA validation playbook |
+| [docs/GITHUB_ACTIONS_EXAMPLES.md](docs/GITHUB_ACTIONS_EXAMPLES.md) | Complete GitHub Actions workflows for parallel SauceLabs + merge |
+| [examples/saucectl/.sauce/config.yml](examples/saucectl/.sauce/config.yml) | Example `saucectl` configuration |
+
+## Contributing
 
 ```bash
-#!/bin/bash
-# run_tests_shared_launch.sh
-
-# Generate UUID once for this test run
-export RP_LAUNCH_UUID=$(uuidgen)
-
-echo "Running tests with shared launch UUID: $RP_LAUNCH_UUID"
-
-xcodebuild test \
-  -scheme MyApp \
-  -testPlan MyTestPlan \
+swift build                                   # build the library
+xcodebuild test -scheme Example \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
-  -parallel-testing-enabled YES \
-  -maximum-parallel-testing-workers 4
+  -only-testing:ExampleUnitTests              # fast unit tests
+bash scripts/tests/test_merge_script.sh       # merge-script self-tests
+bash scripts/tests/test_inject_xctestrun.sh   # inject-script self-tests
 ```
 
-**To merge launches manually (when running from Xcode IDE):**
-1. Go to ReportPortal → Launches
-2. Select your launches
-3. Click "Merge" → Enter merged launch name
-4. All test results combined into single launch
-
-![Merge Example](./example_merge.png)
-
-**Why environment variables from Xcode don't work:**
-
-Environment variables set in Xcode Scheme → Pre-Actions **don't propagate to parallel workers** (they run in isolated processes). The script approach above works because `export` sets the variable in the shell session before launching xcodebuild.
-
-### Worker Count Recommendations
-
-Choose worker count based on your CI/CD environment:
-
-| Environment | Recommended Workers | Reasoning |
-|-------------|---------------------|-----------|
-| **Local Development** (8+ cores) | 4 | Balanced performance without overloading machine |
-| **Local Development** (4-6 cores) | 2-3 | Prevents resource contention |
-| **GitHub Actions** | 2 | Limited CI resources (7GB RAM, 2 cores) |
-| **Bitrise** | 3-4 | Better resource availability |
-| **Jenkins** (self-hosted) | CPU count / 2 | Scale with available hardware |
-| **GitLab CI** | 2-3 | Standard runner specs |
-
-### Verifying Parallel Execution
-
-When tests run in parallel, you should see output like:
-
-```
-Testing started on 'iPhone 16 - Clone 1'
-Testing started on 'iPhone 16 - Clone 2'
-Testing started on 'iPhone 16 - Clone 3'
-Testing started on 'iPhone 16 - Clone 4'
-```
-
-In ReportPortal, all test results will appear under a **single launch** with proper test hierarchy maintained.
-
-### Performance Impact
-
-**Example: ExampleUITests**
-
-| Configuration | Execution Time | Improvement |
-|--------------|----------------|-------------|
-| Sequential (v3.x) | ~40 minutes | Baseline |
-| Sequential (v4.x) | ~30 minutes | **25% faster** |
-| Parallel - 2 workers | ~15 minutes | **160% faster** |
-| Parallel - 3 workers | ~10 minutes | **300% faster** |
-
----
+Issues and pull requests are welcome. Please run the test suites above before opening a PR.
 
 ## Authors
-[@rusel95](https://github.com/rusel95), <ruslanpopesku95@gmail.com>
 
-ReportPortal Team, <support@reportportal.io>
-
-@DarthRumata, <stas.kirichok@windmill.ch> ([Windmill Smart Solutions](https://github.com/Windmill-Smart-Solutions))
-
-@SergeVKom, <sergvkom@gmail.com> (original library)
+- [@rusel95](https://github.com/rusel95) · <ruslanpopesku95@gmail.com>
+- ReportPortal Team · <support@reportportal.io>
+- [@DarthRumata](https://github.com/DarthRumata) (Stas Kirichok, [Windmill Smart Solutions](https://github.com/Windmill-Smart-Solutions))
+- @SergeVKom · <sergvkom@gmail.com> (original library)
 
 ## License
 
-Licensed under the [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) license (see the LICENSE file).
+Licensed under the [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) license — see the [LICENSE](LICENSE) file.

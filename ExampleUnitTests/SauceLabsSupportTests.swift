@@ -23,8 +23,8 @@ import XCTest
 /// process-global `XCTestObservation` observer that never gets removed.
 ///
 /// Environment variables are process-global and cannot be set/unset from Swift, so the
-/// env-var priority path is exercised only in real CI/device runs; here we cover the
-/// Info.plist fallback, nil-bundle, and value-parsing paths.
+/// env-var priority path is validated by `ValidationTest` on SauceLabs real devices; here
+/// we cover the Info.plist fallback, nil-bundle, and value-parsing paths.
 final class SauceLabsSupportTests: XCTestCase {
 
     // MARK: - resolveMergeGroup

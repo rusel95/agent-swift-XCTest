@@ -110,6 +110,7 @@ jobs:
           RP_PROJECT:  ${{ secrets.RP_PROJECT }}
           RP_TOKEN:    ${{ secrets.RP_TOKEN }}
           RP_MERGE_GROUP: regression-${{ github.run_id }}-${{ github.run_attempt }}
+          RP_EXPECTED_LAUNCHES: "6"   # your device/shard count — wait for ALL before merging
         run: scripts/merge_rp_launches.sh
 ```
 

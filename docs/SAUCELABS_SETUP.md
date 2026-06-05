@@ -76,6 +76,7 @@ export RP_ENDPOINT="https://reportportal.example.com"
 export RP_PROJECT="your_project"
 export RP_TOKEN="…"                                  # same token as in Info.plist works
 export RP_MERGE_GROUP="regression-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"   # SAME value as Step 1
+export RP_EXPECTED_LAUNCHES="6"     # your device/shard count — wait for all of them before merging
 
 scripts/merge_rp_launches.sh
 ```
@@ -172,9 +173,16 @@ that is exactly why the **merge_group must be run-unique** instead.
 | `RP_PROJECT` | Yes | — | ReportPortal project name |
 | `RP_TOKEN` | Yes | — | ReportPortal API token |
 | `RP_MERGE_GROUP` | Yes | — | Run-unique merge group to query (same value injected at build) |
+| `RP_EXPECTED_LAUNCHES` | No¹ | — | **Number of shards/devices.** When set, discovery re-queries until this many launches appear before merging (avoids merging only the launches visible at t=0). |
+| `RP_DISCOVER_TIMEOUT` | No | `300` | Max seconds to wait for `RP_EXPECTED_LAUNCHES` launches before merging whatever is found (integer only) |
 | `RP_CI_RUN_ID` | No | `$GITHUB_RUN_ID` | Narrows the query when present; leave unset for SauceLabs real-device runs |
-| `RP_MERGE_FINALIZE_TIMEOUT` | No | `120` | Seconds to wait for in-progress launches (integer only) |
+| `RP_MERGE_FINALIZE_TIMEOUT` | No | `120` | Seconds to wait for in-progress launches to finalize (integer only) |
 | `RP_MERGED_LAUNCH_NAME` | No | `{RP_MERGE_GROUP} (merged)` | Name for the merged launch |
+
+> ¹ **Strongly recommended on SauceLabs.** Without it, discovery is a single snapshot: shards that
+> finalize a moment after `saucectl run` returns aren't visible yet, so the merge silently combines
+> only the launches present at that instant (the classic "merged 4 of 6"). Set it to your device
+> count and the script waits for all of them (up to `RP_DISCOVER_TIMEOUT`).
 
 ---
 
@@ -195,11 +203,18 @@ Causes:
 3. **Merge ran too early.** Ensure it runs after `saucectl run` returns (it blocks until all shards
    finish, so the next step is safe).
 
-### Partial device failures
+### Fewer launches merged than devices (e.g. "merged 4 of 6")
 
-Fewer launches than expected (e.g. 6 of 8): the script merges whatever it finds and logs a warning;
-it does **not** fail the workflow. Check the SauceLabs dashboard — missing devices never created a
-launch.
+Two different causes — distinguish them by searching ReportPortal for the `merge_group` value:
+
+- **All N launches exist in RP, but only some merged** → a **discovery race**: the merge queried
+  once, immediately after `saucectl run`, before the last shards finalized/were indexed. **Fix:** set
+  `RP_EXPECTED_LAUNCHES` to your device count so the script waits for all of them (and raise
+  `RP_DISCOVER_TIMEOUT` if your instance is slow to index).
+- **Only some launches exist in RP** → those shards never reported (device allocation failure, crash,
+  or no network path to RP). Inspect the missing shards' SauceLabs console for the agent markers
+  (`📡 Launch created`, `📎 merge_group`). The script merges what it finds and logs a warning; it
+  does **not** fail the workflow.
 
 ### Merge API errors
 

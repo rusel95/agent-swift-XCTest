@@ -74,6 +74,22 @@ else
   fail "non-numeric timeout is sanitized (got rc=$rc, output: $output)"
 fi
 
+# --- Test 5: RP_EXPECTED_LAUNCHES waits for the count, then proceeds on timeout (no hang) ---
+# Mock always returns 0 launches, so the script can never reach 6; it must poll until
+# RP_DISCOVER_TIMEOUT, warn "Found 0/6", then exit 0 ("nothing to merge") without hanging.
+start=$(date +%s)
+output=$(RP_ENDPOINT="https://rp.example.com" RP_PROJECT="proj" \
+  RP_TOKEN="secret" RP_MERGE_GROUP="grp" \
+  RP_CI_RUN_ID="" GITHUB_RUN_ID="" \
+  RP_EXPECTED_LAUNCHES=6 RP_DISCOVER_TIMEOUT=1 RP_DISCOVER_POLL=1 RP_MERGE_FINALIZE_TIMEOUT=1 \
+  "$MERGE_SCRIPT" 2>&1) && rc=$? || rc=$?
+elapsed=$(( $(date +%s) - start ))
+if [[ $rc -eq 0 ]] && echo "$output" | grep -q "0/6" && (( elapsed < 30 )); then
+  pass "expected-count discovery waits then times out gracefully (exit 0)"
+else
+  fail "expected-count discovery (got rc=$rc, elapsed=${elapsed}s, output: $output)"
+fi
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

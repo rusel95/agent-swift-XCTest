@@ -14,6 +14,8 @@ RP_CI_RUN_ID="${RP_CI_RUN_ID:-${GITHUB_RUN_ID:-}}"
 RP_EXPECTED_LAUNCHES="${RP_EXPECTED_LAUNCHES:-}"
 RP_MERGED_LAUNCH_NAME="${RP_MERGED_LAUNCH_NAME:-"${RP_MERGE_GROUP:-} (merged)"}"
 RP_MERGE_FINALIZE_TIMEOUT="${RP_MERGE_FINALIZE_TIMEOUT:-120}"
+RP_DISCOVER_TIMEOUT="${RP_DISCOVER_TIMEOUT:-300}"
+RP_DISCOVER_POLL="${RP_DISCOVER_POLL:-5}"
 
 # --- Token masking (single source of truth, reused by log() and rp_curl_retry) ---
 mask() {
@@ -99,6 +101,14 @@ validate() {
     log WARN "RP_EXPECTED_LAUNCHES='${RP_EXPECTED_LAUNCHES}' is not an integer; ignoring"
     RP_EXPECTED_LAUNCHES=""
   fi
+  if ! [[ "$RP_DISCOVER_TIMEOUT" =~ ^[0-9]+$ ]]; then
+    log WARN "RP_DISCOVER_TIMEOUT='${RP_DISCOVER_TIMEOUT}' is not an integer (seconds); using 300"
+    RP_DISCOVER_TIMEOUT=300
+  fi
+  if ! [[ "$RP_DISCOVER_POLL" =~ ^[0-9]+$ ]] || (( RP_DISCOVER_POLL < 1 )); then
+    log WARN "RP_DISCOVER_POLL='${RP_DISCOVER_POLL}' is not a positive integer (seconds); using 5"
+    RP_DISCOVER_POLL=5
+  fi
 }
 
 # --- API helpers ---
@@ -110,7 +120,7 @@ api_v2() { echo "${RP_ENDPOINT%/}/api/v2/${RP_PROJECT}"; }
 # ci_run_id is filtered in jq (not as a second URL attribute filter) to avoid ReportPortal's
 # ambiguous "repeated attributeKey/attributeValue" pairing, which can over-match other runs.
 find_launches() {
-  local resp
+  local quiet="${1:-0}" resp
   resp=$(rp_curl_retry -G "$(api_v1)/launch" \
     --data-urlencode "filter.has.attributeKey=merge_group" \
     --data-urlencode "filter.has.attributeValue=${RP_MERGE_GROUP}" \
@@ -126,10 +136,44 @@ find_launches() {
       printf '%s' "$filtered"
       return 0
     fi
-    log WARN "No launches matched ci_run_id=${RP_CI_RUN_ID}; falling back to merge_group-only filter (cannot disambiguate concurrent CI runs — see docs/SAUCELABS_SETUP.md)"
+    if [[ "$quiet" != "1" ]]; then
+      log WARN "No launches matched ci_run_id=${RP_CI_RUN_ID}; falling back to merge_group-only filter (cannot disambiguate concurrent CI runs — see docs/SAUCELABS_SETUP.md)"
+    fi
   fi
 
   printf '%s' "$resp"
+}
+
+# --- Step 1b: Discovery with optional wait-for-expected ---
+# A single snapshot races with per-device launch finalization and ReportPortal's attribute
+# indexing: a shard that finalizes a moment after `saucectl run` returns is invisible at t=0, so
+# the merge silently combines only the launches present then (the "merged 4 of 6" symptom).
+# When RP_EXPECTED_LAUNCHES is set, re-query until that many launches carry the merge_group
+# (or RP_DISCOVER_TIMEOUT elapses), THEN merge. With it unset, behave as a single snapshot.
+discover_launches() {
+  if [[ -z "${RP_EXPECTED_LAUNCHES:-}" ]]; then
+    find_launches
+    return $?
+  fi
+
+  local deadline resp count
+  deadline=$(( $(date +%s) + RP_DISCOVER_TIMEOUT ))
+  while :; do
+    resp=$(find_launches 1) || return 1
+    count=$(echo "$resp" | jq '((.content // []) | length)' 2>/dev/null || echo 0)
+    if (( count >= RP_EXPECTED_LAUNCHES )); then
+      log INFO "Discovered ${count}/${RP_EXPECTED_LAUNCHES} launches"
+      printf '%s' "$resp"
+      return 0
+    fi
+    if (( $(date +%s) >= deadline )); then
+      log WARN "Found ${count}/${RP_EXPECTED_LAUNCHES} launches after ${RP_DISCOVER_TIMEOUT}s; merging what is available (a shard may have failed to report — check SauceLabs)"
+      printf '%s' "$resp"
+      return 0
+    fi
+    log INFO "Found ${count}/${RP_EXPECTED_LAUNCHES} launches; waiting ${RP_DISCOVER_POLL}s for the rest…"
+    sleep "$RP_DISCOVER_POLL"
+  done
 }
 
 # --- Step 2: Poll until launches finish or timeout ---
@@ -184,7 +228,7 @@ main() {
   log INFO "Merging launches for merge_group=${RP_MERGE_GROUP}"
 
   local response
-  response=$(find_launches) || { log ERROR "Failed to query launches"; exit 1; }
+  response=$(discover_launches) || { log ERROR "Failed to query launches"; exit 1; }
 
   local ids uuids count
   ids=$(echo "$response" | jq -c '[(.content // [])[].id]')

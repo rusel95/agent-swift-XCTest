@@ -1,119 +1,65 @@
 # GitHub Actions Examples for SauceLabs + ReportPortal
 
-Complete workflow examples for merging parallel SauceLabs test results into a single ReportPortal launch.
+How to merge parallel SauceLabs XCUITest results into a **single** ReportPortal launch.
 
 ---
 
-## Approach A: Xctestrun UUID Injection
+## TL;DR — why this needs a specific recipe
 
-Injects a shared `RP_LAUNCH_UUID` into the `.xctestrun` file before uploading to SauceLabs. All devices share one launch directly. The merge step is a safety net for devices that didn't pick up the UUID.
+On SauceLabs **real devices**:
 
-```yaml
-name: SauceLabs Regression (Approach A)
+1. Environment variables never reach the XCUITest process — neither `--env` nor YAML `env:`
+   ([saucectl #398](https://github.com/saucelabs/saucectl/issues/398), "Virtual Devices Only").
+2. SauceLabs **regenerates its own `.xctestrun`** from the uploaded `.ipa + .ipa`, so anything
+   injected into the build's `.xctestrun` is discarded (you'll see `XCTestRun Config File = null`
+   in the job metadata).
 
-on:
-  schedule:
-    - cron: '0 6 * * 1-5'  # Weekdays at 6 AM
-  workflow_dispatch:
+The **only** configuration that survives to the device is what is **compiled into the test
+bundle's `Info.plist` at build time**. So the working pattern is:
 
-env:
-  RP_LAUNCH_UUID: ""  # Set dynamically in build job
+1. **Before** building, inject a **run-unique** `ReportPortalMergeGroup` into the test target's
+   `Info.plist` (compiled in and signed as part of the normal build — no re-sign).
+2. Run on SauceLabs. `saucectl run` **blocks** until all shards finish.
+3. **After** `saucectl run`, in the same job, run the merge script with the **same** merge-group
+   value. It finds exactly this run's launches and merges them.
 
-jobs:
-  build:
-    runs-on: macos-latest
-    outputs:
-      rp-launch-uuid: ${{ steps.uuid.outputs.uuid }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build for testing
-        run: |
-          xcodebuild build-for-testing \
-            -scheme YourScheme \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath ./DerivedData
-
-      - name: Generate shared launch UUID
-        id: uuid
-        run: |
-          UUID=$(uuidgen)
-          echo "uuid=$UUID" >> "$GITHUB_OUTPUT"
-          echo "Generated RP_LAUNCH_UUID: $UUID"
-
-      - name: Inject UUID into xctestrun
-        run: |
-          XCTESTRUN=$(find ./DerivedData -name "*.xctestrun" | head -1)
-          scripts/inject_xctestrun_env.sh "$XCTESTRUN" RP_LAUNCH_UUID "${{ steps.uuid.outputs.uuid }}"
-
-      - name: Package artifacts
-        run: |
-          mkdir -p ./build
-          cp $(find ./DerivedData -name "*.ipa" | head -1) ./build/Example.ipa
-          cp $(find ./DerivedData -name "*-Runner.ipa" | head -1) ./build/ExampleUITests-Runner.ipa
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-artifacts
-          path: build/
-
-  test:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: test-artifacts
-          path: build/
-
-      - name: Install saucectl
-        run: npm i -g saucectl
-
-      - name: Run tests on SauceLabs
-        env:
-          SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
-          SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
-        run: saucectl run --config .sauce/config.yml
-
-      # Safety net: merge any launches that didn't share the UUID
-      - name: Merge ReportPortal launches (safety net)
-        if: always()
-        env:
-          RP_ENDPOINT: ${{ secrets.RP_ENDPOINT }}
-          RP_PROJECT: ${{ secrets.RP_PROJECT }}
-          RP_TOKEN: ${{ secrets.RP_TOKEN }}
-          RP_MERGE_GROUP: "regression-${{ github.run_id }}"
-          RP_CI_RUN_ID: ${{ github.run_id }}
-        run: scripts/merge_rp_launches.sh
-```
+Each device still creates its own launch — but they all carry the same `merge_group` attribute, so
+the merge script can pick out exactly the ones from this run. Do **not** rely on `RP_LAUNCH_UUID`
+or `--env` on real devices.
 
 ---
 
-## Approach C: Post-Run Merge (Recommended)
-
-Each device creates its own launch. The merge step combines them after all shards finish. No dependency on SauceLabs env var behavior.
-
-**Prerequisites:** Set these in your Test Target's `Info.plist` (since env vars don't reach SauceLabs real devices):
-- `ReportPortalMergeGroup` = your merge group name (e.g. `regression-nightly`)
-- `ReportPortalSkipFinish` = `YES`
+## Canonical workflow
 
 ```yaml
-name: SauceLabs Regression (Approach C)
+name: SauceLabs Regression
 
 on:
   schedule:
-    - cron: '0 6 * * 1-5'
+    - cron: '0 6 * * 1-5'   # weekdays at 6 AM
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-latest          # xcodebuild requires macOS
     steps:
       - uses: actions/checkout@v4
+
+      # If you use XcodeGen, generate the project first:
+      # - name: Generate project
+      #   run: xcodegen generate
+
+      # ── Inject a RUN-UNIQUE merge_group into the test target's Info.plist ──
+      # This MUST happen BEFORE xcodebuild so the value is compiled in and signed
+      # normally. Patching the built/signed .xctest would invalidate the signature
+      # and the runner would not install on a real device.
+      - name: Inject run-unique merge_group (pre-build)
+        run: |
+          MERGE_GROUP="regression-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          PLIST="ExampleUITests/Info.plist"     # ← your test target's INFOPLIST_FILE
+          /usr/libexec/PlistBuddy -c "Delete :ReportPortalMergeGroup" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :ReportPortalMergeGroup string $MERGE_GROUP" "$PLIST"
+          echo "Injected merge_group = $MERGE_GROUP"
 
       - name: Build for testing
         run: |
@@ -135,7 +81,7 @@ jobs:
           path: build/
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest         # saucectl + merge script only need curl/jq
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -149,59 +95,96 @@ jobs:
       - name: Install saucectl
         run: npm i -g saucectl
 
-      - name: Run tests on SauceLabs
+      - name: Run tests on SauceLabs       # blocks until ALL shards finish
         env:
           SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
           SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
         run: saucectl run --config .sauce/config.yml
 
-      # CRITICAL: if: always() ensures merge runs even when test steps fail.
-      # Without this, failed test runs won't produce a merged report for diagnosis.
+      # if: always() → merge runs even when tests fail (failures are expected).
+      # Same merge_group value as the build job (run_id + run_attempt match across jobs).
       - name: Merge ReportPortal launches
         if: always()
         env:
           RP_ENDPOINT: ${{ secrets.RP_ENDPOINT }}
-          RP_PROJECT: ${{ secrets.RP_PROJECT }}
-          RP_TOKEN: ${{ secrets.RP_TOKEN }}
-          RP_MERGE_GROUP: "regression-nightly"
-          RP_CI_RUN_ID: ${{ github.run_id }}
+          RP_PROJECT:  ${{ secrets.RP_PROJECT }}
+          RP_TOKEN:    ${{ secrets.RP_TOKEN }}
+          RP_MERGE_GROUP: regression-${{ github.run_id }}-${{ github.run_attempt }}
         run: scripts/merge_rp_launches.sh
 ```
 
+> If your app repo does not vendor `scripts/merge_rp_launches.sh`, fetch it in the merge step:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/reportportal/agent-swift-XCTest/main/scripts/merge_rp_launches.sh -o merge.sh
+> chmod +x merge.sh && ./merge.sh
+> ```
+
 ---
 
-## Required GitHub Secrets
+## Key design decisions
 
-Configure these in your repository settings (Settings → Secrets and variables → Actions):
+### Why a run-unique merge group?
+
+`regression-${{ github.run_id }}-${{ github.run_attempt }}`:
+
+- `run_id` is **identical across every job** of one workflow run, so the build job and the merge
+  job agree on the value automatically — nothing needs to be passed between them.
+- `run_attempt` increments on a **re-run** (which keeps the same `run_id`), so a re-run does not
+  collide with the original run's launches.
+
+A static value like `regression-nightly` is unsafe: two runs in the same day (or a re-run) would
+merge each other's launches. Because env vars don't reach the device, the launches carry
+`merge_group` but **not** `ci_run_id`, so the merge group itself must be the unique key.
+
+### Why inject into `Info.plist` *before* build (not after)?
+
+Patching the built/signed `.xctest` invalidates the code signature → the test runner won't install
+on a real device. Injecting into the **source** `Info.plist` before `xcodebuild` means the value is
+compiled in and signed as part of the normal build.
+
+**Alternative (Xcode-native):** put `ReportPortalMergeGroup = $(RP_MERGE_GROUP)` in the test
+target's `Info.plist` once (survives XcodeGen if it's in the spec), then build with
+`xcodebuild build-for-testing … RP_MERGE_GROUP="regression-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"`.
+Xcode substitutes the build setting into the plist during the normal build.
+
+### Why **not** set `ReportPortalSkipFinish=YES`?
+
+`skipFinish` keeps each device's launch `IN_PROGRESS` (it delegates finalization to the merge
+script). But the merge script then waits the full `RP_MERGE_FINALIZE_TIMEOUT` (default 120s) for a
+terminal status that never comes, before force-finishing. For a first working integration, **don't
+set it** — let each device finalize its own launch (so launches are already `PASSED`/`FAILED`), and
+the merge is immediate. The script's force-finish stays as a safety net for stragglers.
+
+### Why two jobs (`macos-latest` + `ubuntu-latest`)?
+
+This is just how GitHub Actions works — each **job** runs on a **runner**, and you choose the OS:
+
+- **build** must be on macOS, because `xcodebuild` only runs there.
+- **test** runs on Ubuntu because `saucectl` is just a CLI that talks to the SauceLabs cloud (the
+  actual devices are in SauceLabs, not on the runner), and the merge script only needs `curl`/`jq`.
+  Ubuntu runners are cheaper and faster than macOS ones.
+
+You *could* run everything on macOS; splitting is a cost/speed optimization, not a requirement.
+Both jobs are in the **same workflow run**, so they share the same `github.run_id`.
+
+### Required GitHub secrets
 
 | Secret | Description | Example |
 |--------|-------------|---------|
 | `SAUCE_USERNAME` | SauceLabs username | `your-username` |
-| `SAUCE_ACCESS_KEY` | SauceLabs access key | `abc123-def456-...` |
+| `SAUCE_ACCESS_KEY` | SauceLabs access key | `abc123-def456-…` |
 | `RP_ENDPOINT` | ReportPortal base URL | `https://reportportal.example.com` |
 | `RP_PROJECT` | ReportPortal project name | `my_project` |
-| `RP_TOKEN` | ReportPortal API token (without Bearer prefix) | `abc123...` |
+| `RP_TOKEN` | ReportPortal API token (no `Bearer` prefix) — the same token you put in `Info.plist` works | `abc123…` |
 
----
-
-## Key Design Decisions
-
-### Why `if: always()` on the merge step?
-
-Without `if: always()`, GitHub Actions skips subsequent steps when a previous step fails. Since test failures are expected (that's what you're testing), the merge step must run regardless. Otherwise, failed runs produce no merged report — exactly when you need one most.
-
-### Why separate build and test jobs?
-
-- **build** runs on `macos-latest` (required for `xcodebuild`)
-- **test** runs on `ubuntu-latest` (cheaper, faster; `saucectl` and the merge script only need `curl`/`jq`)
-
-### Why not pass env vars via saucectl?
-
-SauceLabs `--env` flag and YAML `env:` property do **not** inject environment variables into the XCUITest process on real devices. This is a [confirmed known limitation](https://github.com/saucelabs/saucectl/issues/398). That's why Approach C uses Info.plist keys instead.
+> The Ubuntu runner must be able to **reach your ReportPortal over the network**. If RP is internal
+> (behind a VPN), a GitHub-hosted runner cannot reach it — use a self-hosted runner or set
+> `HTTPS_PROXY`.
 
 ---
 
 ## See Also
 
-- [docs/SAUCELABS_SETUP.md](./SAUCELABS_SETUP.md) — Full setup guide with configuration reference and troubleshooting
+- [docs/SAUCELABS_SETUP.md](./SAUCELABS_SETUP.md) — Full setup guide, configuration reference, troubleshooting
+- [docs/SAUCELABS_QA_INSTRUCTIONS.md](./SAUCELABS_QA_INSTRUCTIONS.md) — Step-by-step for QA validating the fork branch
 - [examples/saucectl/.sauce/config.yml](../examples/saucectl/.sauce/config.yml) — Example saucectl configuration

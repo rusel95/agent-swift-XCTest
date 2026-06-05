@@ -55,7 +55,6 @@
 		92FEE096212EF30700ADB1ED /* StartItemEndPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FEE095212EF30700ADB1ED /* StartItemEndPoint.swift */; };
 		92FEE098212F028B00ADB1ED /* PostLogEndPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FEE097212F028B00ADB1ED /* PostLogEndPoint.swift */; };
 		BD1165E1A84B45760BF25761 /* SauceLabsSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 250F54218FE1A4BA34288951 /* SauceLabsSupportTests.swift */; };
-		85F1A2002EC3D00000AABB01 /* ValidationTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85F1A2012EC3D00000AABB01 /* ValidationTest.swift */; };
 		FE6653CD2899F4316DA698AB /* ReportingServiceError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0875240659673E68475617D3 /* ReportingServiceError.swift */; };
 /* End PBXBuildFile section */
 
@@ -150,7 +149,6 @@
 		92FEE095212EF30700ADB1ED /* StartItemEndPoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartItemEndPoint.swift; sourceTree = "<group>"; };
 		92FEE097212F028B00ADB1ED /* PostLogEndPoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostLogEndPoint.swift; sourceTree = "<group>"; };
 		9497CEB02BC6C1BE00A23B73 /* Example.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = Example.xctestplan; sourceTree = "<group>"; };
-		85F1A2012EC3D00000AABB01 /* ValidationTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ValidationTest.swift; sourceTree = "<group>"; };
 		B298DF4C300965F413082F68 /* Pods_RPAgentSwiftXCTest.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RPAgentSwiftXCTest.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -259,7 +257,6 @@
 		9203A3AD2135C20E00BFAF82 /* ExampleUITests */ = {
 			isa = PBXGroup;
 			children = (
-				85F1A2022EC3D00000AABB01 /* SauceLabs */,
 				85E8FC5F2EB0D14200D94838 /* ParallelCalculationsUITests.swift */,
 				85E8FC602EB0D14200D94838 /* ParallelDataEntryUITests.swift */,
 				85E8FC612EB0D14200D94838 /* ParallelEdgeCasesUITests.swift */,
@@ -271,14 +268,6 @@
 				9203A3B02135C20E00BFAF82 /* Info.plist */,
 			);
 			path = ExampleUITests;
-			sourceTree = "<group>";
-		};
-		85F1A2022EC3D00000AABB01 /* SauceLabs */ = {
-			isa = PBXGroup;
-			children = (
-				85F1A2012EC3D00000AABB01 /* ValidationTest.swift */,
-			);
-			path = SauceLabs;
 			sourceTree = "<group>";
 		};
 		92FEE06A212E924B00ADB1ED /* Entities */ = {
@@ -555,7 +544,6 @@
 				85E8FC682EB0D14200D94838 /* ParallelEdgeCasesUITests.swift in Sources */,
 				85E8FC692EB0D14200D94838 /* ParallelCalculationsUITests.swift in Sources */,
 				85E8FC6A2EB0D14200D94838 /* ParallelNavigationUITests.swift in Sources */,
-				85F1A2002EC3D00000AABB01 /* ValidationTest.swift in Sources */,
 			);
 		};
 /* End PBXSourcesBuildPhase section */

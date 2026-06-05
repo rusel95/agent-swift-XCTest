@@ -260,7 +260,6 @@ xcodebuild test -scheme Example \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
   -only-testing:ExampleUnitTests              # fast unit tests
 bash scripts/tests/test_merge_script.sh       # merge-script self-tests
-bash scripts/tests/test_inject_xctestrun.sh   # inject-script self-tests
 ```
 
 Issues and pull requests are welcome. Please run the test suites above before opening a PR.

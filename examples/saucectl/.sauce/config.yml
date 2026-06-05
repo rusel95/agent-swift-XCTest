@@ -13,9 +13,11 @@
 # The `env:` values below are only used for saucectl's own YAML variable
 # expansion (e.g., resolving $APP paths), NOT passed to the device.
 #
-# To pass configuration to the agent on real devices, use Info.plist keys:
-#   - ReportPortalMergeGroup  (for merge grouping)
-#   - ReportPortalSkipFinish  (to delegate finalization to merge script)
+# To pass configuration to the agent on real devices, inject it into the test target's
+# Info.plist at BUILD time (before xcodebuild; patching the signed bundle breaks code signing):
+#   - ReportPortalMergeGroup = a RUN-UNIQUE value, e.g. regression-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
+# Leave ReportPortalSkipFinish unset — let each device finalize its own launch; the merge step
+# combines them afterwards.
 #
 # See docs/SAUCELABS_SETUP.md for the full setup guide.
 

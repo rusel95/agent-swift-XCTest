@@ -76,7 +76,9 @@ export RP_ENDPOINT="https://reportportal.example.com"
 export RP_PROJECT="your_project"
 export RP_TOKEN="…"                                  # same token as in Info.plist works
 export RP_MERGE_GROUP="regression-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"   # SAME value as Step 1
-export RP_EXPECTED_LAUNCHES="6"     # your device/shard count — wait for all of them before merging
+# Wait for all shard launches before merging (avoids "merged 4 of 6"). Pick ONE:
+export RP_DISCOVER_STABLE_POLLS="3"   # count-agnostic: merge once no new launch appears for 3 polls (use if the count varies)
+# export RP_EXPECTED_LAUNCHES="6"     # OR exact shard count, if it's fixed
 
 scripts/merge_rp_launches.sh
 ```
@@ -173,16 +175,19 @@ that is exactly why the **merge_group must be run-unique** instead.
 | `RP_PROJECT` | Yes | — | ReportPortal project name |
 | `RP_TOKEN` | Yes | — | ReportPortal API token |
 | `RP_MERGE_GROUP` | Yes | — | Run-unique merge group to query (same value injected at build) |
-| `RP_EXPECTED_LAUNCHES` | No¹ | — | **Number of shards/devices.** When set, discovery re-queries until this many launches appear before merging (avoids merging only the launches visible at t=0). |
-| `RP_DISCOVER_TIMEOUT` | No | `300` | Max seconds to wait for `RP_EXPECTED_LAUNCHES` launches before merging whatever is found (integer only) |
+| `RP_DISCOVER_STABLE_POLLS` | No¹ | `0` (off) | **Count-agnostic wait.** When >0, discovery re-queries until the launch count stops growing for this many consecutive polls, then merges. Best when the shard count is dynamic/unknown. |
+| `RP_EXPECTED_LAUNCHES` | No¹ | — | **Precise wait.** When set, discovery re-queries until exactly this many launches appear, then merges. Use when the shard count is fixed. |
+| `RP_DISCOVER_TIMEOUT` | No | `300` | Hard cap (seconds) on the wait above; after it, merge whatever was found (integer only) |
+| `RP_DISCOVER_POLL` | No | `5` | Seconds between discovery re-queries (integer only) |
 | `RP_CI_RUN_ID` | No | `$GITHUB_RUN_ID` | Narrows the query when present; leave unset for SauceLabs real-device runs |
 | `RP_MERGE_FINALIZE_TIMEOUT` | No | `120` | Seconds to wait for in-progress launches to finalize (integer only) |
 | `RP_MERGED_LAUNCH_NAME` | No | `{RP_MERGE_GROUP} (merged)` | Name for the merged launch |
 
-> ¹ **Strongly recommended on SauceLabs.** Without it, discovery is a single snapshot: shards that
+> ¹ **Set one of these on SauceLabs.** Without either, discovery is a single snapshot: shards that
 > finalize a moment after `saucectl run` returns aren't visible yet, so the merge silently combines
-> only the launches present at that instant (the classic "merged 4 of 6"). Set it to your device
-> count and the script waits for all of them (up to `RP_DISCOVER_TIMEOUT`).
+> only the launches present at that instant (the classic "merged 4 of 6"). Prefer
+> `RP_DISCOVER_STABLE_POLLS` (e.g. `3`) when the device count can vary; use `RP_EXPECTED_LAUNCHES`
+> when it's fixed. Both are bounded by `RP_DISCOVER_TIMEOUT`.
 
 ---
 
@@ -208,9 +213,9 @@ Causes:
 Two different causes — distinguish them by searching ReportPortal for the `merge_group` value:
 
 - **All N launches exist in RP, but only some merged** → a **discovery race**: the merge queried
-  once, immediately after `saucectl run`, before the last shards finalized/were indexed. **Fix:** set
-  `RP_EXPECTED_LAUNCHES` to your device count so the script waits for all of them (and raise
-  `RP_DISCOVER_TIMEOUT` if your instance is slow to index).
+  once, immediately after `saucectl run`, before the last shards finalized/were indexed. **Fix:** make
+  the merge step wait — set `RP_DISCOVER_STABLE_POLLS` (count-agnostic) or `RP_EXPECTED_LAUNCHES`
+  (fixed count), and raise `RP_DISCOVER_TIMEOUT` if your instance is slow to index.
 - **Only some launches exist in RP** → those shards never reported (device allocation failure, crash,
   or no network path to RP). Inspect the missing shards' SauceLabs console for the agent markers
   (`📡 Launch created`, `📎 merge_group`). The script merges what it finds and logs a warning; it

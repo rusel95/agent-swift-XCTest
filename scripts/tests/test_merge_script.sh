@@ -90,6 +90,43 @@ else
   fail "expected-count discovery (got rc=$rc, elapsed=${elapsed}s, output: $output)"
 fi
 
+# --- Test 6: RP_DISCOVER_STABLE_POLLS merges once the count settles (count-agnostic) ---
+# Richer mock: the launch-list query returns a stable 2 launches, status queries return PASSED,
+# and the merge POST returns a merged id. The script must detect the count is stable, then merge.
+MOCK_DIR2="${TMPDIR_TEST}/m2"; mkdir -p "$MOCK_DIR2"
+cat > "$MOCK_DIR2/curl" <<'MOCK'
+#!/usr/bin/env bash
+out=""; prev=""; is_merge=0; is_status=0
+for arg in "$@"; do
+  [[ "$prev" == "-o" ]] && out="$arg"
+  [[ "$arg" == *"/launch/merge"* ]] && is_merge=1
+  [[ "$arg" == *"filter.eq.id"* ]] && is_status=1
+  prev="$arg"
+done
+if (( is_merge )); then
+  body='{"id":4242}'
+elif (( is_status )); then
+  body='{"content":[{"id":1,"status":"PASSED"}],"page":{"totalElements":1}}'
+else
+  body='{"content":[{"id":1,"uuid":"u1","status":"PASSED"},{"id":2,"uuid":"u2","status":"PASSED"}],"page":{"totalElements":2}}'
+fi
+[[ -n "$out" ]] && printf '%s' "$body" > "$out"
+printf '200'
+exit 0
+MOCK
+chmod +x "$MOCK_DIR2/curl"
+output=$(PATH="${MOCK_DIR2}:${PATH}" \
+  RP_ENDPOINT="https://rp.example.com" RP_PROJECT="proj" \
+  RP_TOKEN="secret" RP_MERGE_GROUP="grp" \
+  RP_CI_RUN_ID="" GITHUB_RUN_ID="" \
+  RP_DISCOVER_STABLE_POLLS=2 RP_DISCOVER_POLL=1 RP_DISCOVER_TIMEOUT=20 RP_MERGE_FINALIZE_TIMEOUT=5 \
+  "$MERGE_SCRIPT" 2>&1) && rc=$? || rc=$?
+if [[ $rc -eq 0 ]] && echo "$output" | grep -q "stable at 2" && echo "$output" | grep -q "Merged launch"; then
+  pass "stable-count discovery waits for settle then merges (count-agnostic)"
+else
+  fail "stable-count discovery (got rc=$rc, output: $output)"
+fi
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

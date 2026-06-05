@@ -110,7 +110,9 @@ jobs:
           RP_PROJECT:  ${{ secrets.RP_PROJECT }}
           RP_TOKEN:    ${{ secrets.RP_TOKEN }}
           RP_MERGE_GROUP: regression-${{ github.run_id }}-${{ github.run_attempt }}
-          RP_EXPECTED_LAUNCHES: "6"   # your device/shard count — wait for ALL before merging
+          # Wait for all shard launches before merging (avoids "merged 4 of 6"). Pick ONE:
+          RP_DISCOVER_STABLE_POLLS: "3"   # count-agnostic — merge once no new launch appears for 3 polls
+          # RP_EXPECTED_LAUNCHES: "6"     # OR exact shard count, if it's fixed
         run: scripts/merge_rp_launches.sh
 ```
 

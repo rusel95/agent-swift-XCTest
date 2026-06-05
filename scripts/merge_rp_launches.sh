@@ -16,6 +16,7 @@ RP_MERGED_LAUNCH_NAME="${RP_MERGED_LAUNCH_NAME:-"${RP_MERGE_GROUP:-} (merged)"}"
 RP_MERGE_FINALIZE_TIMEOUT="${RP_MERGE_FINALIZE_TIMEOUT:-120}"
 RP_DISCOVER_TIMEOUT="${RP_DISCOVER_TIMEOUT:-300}"
 RP_DISCOVER_POLL="${RP_DISCOVER_POLL:-5}"
+RP_DISCOVER_STABLE_POLLS="${RP_DISCOVER_STABLE_POLLS:-0}"
 
 # --- Token masking (single source of truth, reused by log() and rp_curl_retry) ---
 mask() {
@@ -109,6 +110,10 @@ validate() {
     log WARN "RP_DISCOVER_POLL='${RP_DISCOVER_POLL}' is not a positive integer (seconds); using 5"
     RP_DISCOVER_POLL=5
   fi
+  if ! [[ "$RP_DISCOVER_STABLE_POLLS" =~ ^[0-9]+$ ]]; then
+    log WARN "RP_DISCOVER_STABLE_POLLS='${RP_DISCOVER_STABLE_POLLS}' is not an integer; using 0 (disabled)"
+    RP_DISCOVER_STABLE_POLLS=0
+  fi
 }
 
 # --- API helpers ---
@@ -144,34 +149,56 @@ find_launches() {
   printf '%s' "$resp"
 }
 
-# --- Step 1b: Discovery with optional wait-for-expected ---
+# --- Step 1b: Discovery — wait for launches before merging ---
 # A single snapshot races with per-device launch finalization and ReportPortal's attribute
-# indexing: a shard that finalizes a moment after `saucectl run` returns is invisible at t=0, so
-# the merge silently combines only the launches present then (the "merged 4 of 6" symptom).
-# When RP_EXPECTED_LAUNCHES is set, re-query until that many launches carry the merge_group
-# (or RP_DISCOVER_TIMEOUT elapses), THEN merge. With it unset, behave as a single snapshot.
+# indexing: a shard that finalizes a moment after `saucectl run` returns is invisible at t=0, so a
+# naive merge combines only the launches present then (the "merged 4 of 6" symptom). Two opt-in
+# waiting modes avoid this (either or both; both bounded by RP_DISCOVER_TIMEOUT, polled every
+# RP_DISCOVER_POLL seconds):
+#   * RP_EXPECTED_LAUNCHES=N     — wait until N launches carry the merge_group (precise; needs the count).
+#   * RP_DISCOVER_STABLE_POLLS=K — wait until the count stops growing for K consecutive polls
+#                                  (count-agnostic; best when the shard count is dynamic/unknown).
+# With neither set, discovery is a single snapshot (legacy behavior).
 discover_launches() {
-  if [[ -z "${RP_EXPECTED_LAUNCHES:-}" ]]; then
+  if [[ -z "${RP_EXPECTED_LAUNCHES:-}" ]] && (( RP_DISCOVER_STABLE_POLLS == 0 )); then
     find_launches
     return $?
   fi
 
-  local deadline resp count
+  local deadline resp count prev=-1 stable=0
   deadline=$(( $(date +%s) + RP_DISCOVER_TIMEOUT ))
   while :; do
     resp=$(find_launches 1) || return 1
     count=$(echo "$resp" | jq '((.content // []) | length)' 2>/dev/null || echo 0)
-    if (( count >= RP_EXPECTED_LAUNCHES )); then
+
+    # Precise target reached.
+    if [[ -n "${RP_EXPECTED_LAUNCHES:-}" ]] && (( count >= RP_EXPECTED_LAUNCHES )); then
       log INFO "Discovered ${count}/${RP_EXPECTED_LAUNCHES} launches"
-      printf '%s' "$resp"
-      return 0
+      printf '%s' "$resp"; return 0
     fi
+
+    # Count has settled: same (non-zero) count for RP_DISCOVER_STABLE_POLLS consecutive polls.
+    if (( RP_DISCOVER_STABLE_POLLS > 0 )) && (( count > 0 )) && (( count == prev )); then
+      stable=$(( stable + 1 ))
+      if (( stable >= RP_DISCOVER_STABLE_POLLS )); then
+        log INFO "Launch count stable at ${count} for ${RP_DISCOVER_STABLE_POLLS} polls; merging"
+        printf '%s' "$resp"; return 0
+      fi
+    else
+      stable=0
+    fi
+
     if (( $(date +%s) >= deadline )); then
-      log WARN "Found ${count}/${RP_EXPECTED_LAUNCHES} launches after ${RP_DISCOVER_TIMEOUT}s; merging what is available (a shard may have failed to report — check SauceLabs)"
-      printf '%s' "$resp"
-      return 0
+      log WARN "Discovery timed out after ${RP_DISCOVER_TIMEOUT}s at ${count} launch(es); merging what is available (a shard may have failed to report — check SauceLabs)"
+      printf '%s' "$resp"; return 0
     fi
-    log INFO "Found ${count}/${RP_EXPECTED_LAUNCHES} launches; waiting ${RP_DISCOVER_POLL}s for the rest…"
+
+    prev=$count
+    if [[ -n "${RP_EXPECTED_LAUNCHES:-}" ]]; then
+      log INFO "Found ${count}/${RP_EXPECTED_LAUNCHES} launch(es); waiting ${RP_DISCOVER_POLL}s for the rest…"
+    else
+      log INFO "Found ${count} launch(es); waiting ${RP_DISCOVER_POLL}s for the count to settle…"
+    fi
     sleep "$RP_DISCOVER_POLL"
   done
 }

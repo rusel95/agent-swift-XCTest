@@ -72,7 +72,7 @@ export RP_ENDPOINT="https://<your-reportportal>"
 export RP_PROJECT="<project>"
 export RP_TOKEN="<token — the same one in Info.plist works>"
 export RP_MERGE_GROUP="regression-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"   # SAME as Step 3
-export RP_EXPECTED_LAUNCHES="6"     # device/shard count — script waits for all before merging
+export RP_DISCOVER_STABLE_POLLS="3"   # wait until no new launch appears for 3 polls (count-agnostic)
 
 ./.sauce/merge_rp_launches.sh 2>&1 | tee merge.log
 ```

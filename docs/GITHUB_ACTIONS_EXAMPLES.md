@@ -113,11 +113,17 @@ jobs:
         run: scripts/merge_rp_launches.sh
 ```
 
-> If your app repo does not vendor `scripts/merge_rp_launches.sh`, fetch it in the merge step:
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/reportportal/agent-swift-XCTest/main/scripts/merge_rp_launches.sh -o merge.sh
-> chmod +x merge.sh && ./merge.sh
-> ```
+> **Vendor `merge_rp_launches.sh` into your repo.** Commit a copy (e.g. at
+> `scripts/merge_rp_launches.sh` or `.sauce/merge_rp_launches.sh`) and call that local path, as
+> the workflow above does. The script is a **CI artifact, not delivered via Swift Package Manager**
+> (SPM ships library code, not files to your CI filesystem), so a local copy is required even after
+> the agent is officially released. Keep its Apache-2.0 header and add a comment noting the upstream
+> commit you copied from, so you can re-sync later.
+>
+> Do **not** `curl … | sh` it from a branch at runtime in production — that executes unpinned code
+> from a remote repo on every run (fragile if the branch moves/disappears, and a CI supply-chain
+> risk). A one-off `curl … -o merge.sh` pinned to a **commit SHA** is acceptable only for a
+> throwaway spike, never for scheduled runs.
 
 ---
 

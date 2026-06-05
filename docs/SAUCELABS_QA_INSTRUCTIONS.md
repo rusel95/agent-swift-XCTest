@@ -63,17 +63,22 @@ saucectl run --config .sauce/config.yml          # at least 2 real devices; bloc
 
 ## Step 5 — Merge (next step after saucectl, same job)
 
+**Vendor the script once** (commit a copy into the app repo — it's a CI artifact, not shipped via
+SPM): copy `scripts/merge_rp_launches.sh` into `.sauce/merge_rp_launches.sh`, keep its Apache-2.0
+header, add a comment with the upstream commit SHA, and `chmod +x` it. Then:
+
 ```bash
 export RP_ENDPOINT="https://<your-reportportal>"
 export RP_PROJECT="<project>"
 export RP_TOKEN="<token — the same one in Info.plist works>"
 export RP_MERGE_GROUP="regression-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"   # SAME as Step 3
 
-# if the script isn't vendored in the app repo, fetch it from the fork branch:
-curl -fsSL https://raw.githubusercontent.com/rusel95/agent-swift-XCTest/003-saucelab-integration/scripts/merge_rp_launches.sh -o merge.sh
-chmod +x merge.sh
-./merge.sh 2>&1 | tee merge.log
+./.sauce/merge_rp_launches.sh 2>&1 | tee merge.log
 ```
+
+> Spike only (never for scheduled runs): you may `curl` the script from a **pinned commit SHA**
+> (not a branch) for a one-off manual test. Don't `curl`-at-runtime in CI — it executes unpinned
+> remote code every run.
 
 In CI, add `RP_TOKEN` (and `RP_ENDPOINT`/`RP_PROJECT`) as repository secrets
 (**Settings → Secrets and variables → Actions**) and reference them via `${{ secrets.* }}`.

@@ -62,7 +62,7 @@ The agent hooks into XCTest via [`XCTestObservation`](https://developer.apple.co
 
 In Xcode: **File → Add Package Dependencies…**, enter the repository URL, and add the **`ReportPortalAgent`** library to your **test** target.
 
-```
+```text
 https://github.com/reportportal/agent-swift-XCTest.git
 ```
 
@@ -218,39 +218,25 @@ For local Xcode runs that produce separate launches, you can also merge them by 
 
 SauceLabs real devices are isolated — they share neither a filesystem nor environment variables, so the simulator-style shared-UUID approach can't work. Instead each device creates its own launch (tagged with a `merge_group`), defers finalization (`ReportPortalSkipFinish`), and a post-run script merges them into one launch.
 
-```bash
-# After all SauceLabs shards finish:
-RP_ENDPOINT=… RP_PROJECT=… RP_TOKEN=… RP_MERGE_GROUP="regression-${GITHUB_RUN_ID}" \
-  scripts/merge_rp_launches.sh
-```
-
-👉 Full setup, configuration, CI examples, **and the QA validation playbook** live in **[docs/SAUCELABS_SETUP.md](docs/SAUCELABS_SETUP.md)** and **[docs/GITHUB_ACTIONS_EXAMPLES.md](docs/GITHUB_ACTIONS_EXAMPLES.md)**.
+The merge scripts and CI workflow examples live in the consuming project (not in this library).
 
 ## How It Works
 
-```
+```text
 XCTest run
    │  XCTestObservation callbacks
    ▼
-RPListener ──► LaunchManager        (launch identity: shared RP_LAUNCH_UUID or per-worker UUID; 409 = already exists)
+RPListener ──► LaunchUUID           (launch identity: shared RP_LAUNCH_UUID or per-worker UUID)
    │            │
    │            ▼
    └─────────► ReportingService ──► HTTPClient ──► ReportPortal API v2
                 (async/await, stateless suite/test/log calls)
 ```
 
-- **`RPListener`** — the `XCTestObservation` entry point; resolves configuration and translates test events into API calls.
-- **`LaunchManager`** — owns launch identity and guarantees the launch is created exactly once across parallel workers.
+- **`RPListener`** — the `XCTestObservation` entry point; resolves configuration and translates test events into API calls. Uses a "launch gate" Task to guarantee launch exists before any suites/tests are reported.
+- **`LaunchUUID`** — resolves launch UUID once per process (`RP_LAUNCH_UUID` env var or auto-generated).
 - **`ReportingService`** — stateless async/await wrapper over the ReportPortal v2 API.
-- **Idempotency** — joining an existing launch and finalizing an already-finished launch (HTTP 409) are both treated as success.
-
-## Documentation
-
-| Doc | What it covers |
-|-----|----------------|
-| [docs/SAUCELABS_SETUP.md](docs/SAUCELABS_SETUP.md) | Full SauceLabs setup, configuration reference, troubleshooting, and the QA validation playbook |
-| [docs/GITHUB_ACTIONS_EXAMPLES.md](docs/GITHUB_ACTIONS_EXAMPLES.md) | Complete GitHub Actions workflows for parallel SauceLabs + merge |
-| [examples/saucectl/.sauce/config.yml](examples/saucectl/.sauce/config.yml) | Example `saucectl` configuration |
+- **Idempotency** — joining an existing launch (HTTP 409 on start) and finalizing an already-finished launch (HTTP 409 on finish) are both treated as success.
 
 ## Contributing
 
@@ -259,11 +245,9 @@ swift build                                   # build the library
 xcodebuild test -scheme Example \
   -destination 'platform=iOS Simulator,name=iPhone 16' \
   -only-testing:ExampleUnitTests              # fast unit tests
-bash scripts/tests/test_merge_script.sh       # merge-script self-tests
-bash scripts/tests/test_inject_xctestrun.sh   # inject-script self-tests
 ```
 
-Issues and pull requests are welcome. Please run the test suites above before opening a PR.
+Issues and pull requests are welcome. Please run the test suite above before opening a PR.
 
 ## Authors
 

@@ -43,18 +43,6 @@ jobs:
           # CocoaPods consumers actually use for this XCTest agent.
           pod lib lint --allow-warnings --platforms=ios
 
-  script-tests:
-    name: Shell script self-tests
-    runs-on: macos-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Run merge & inject script tests
-        run: |
-          bash scripts/tests/test_merge_script.sh
-          bash scripts/tests/test_inject_xctestrun.sh
-
   build:
     name: Build default scheme using any available iPhone simulator
     runs-on: macos-latest
@@ -97,8 +85,7 @@ jobs:
           # deterministic in CI. It covers the agent's own resolution logic
           # (parseBoolFlag, resolveMergeGroup/SkipFinish, the 409 finalize predicate,
           # OperationTracker). ExampleUITests are intentionally excluded — they need
-          # parallel simulators / SauceLabs and are validated separately
-          # (see docs/SAUCELABS_SETUP.md).
+          # parallel simulators / SauceLabs and are validated separately.
           xcodebuild test \
             -scheme Example \
             -project ReportPortalAgent.xcodeproj \

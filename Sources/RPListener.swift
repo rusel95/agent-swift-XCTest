@@ -20,8 +20,7 @@ open class RPListener: NSObject, XCTestObservation {
 
     private var reportingService: ReportingService?
 
-    // Shared actors for parallel execution
-    private let launchManager = LaunchManager.shared
+    // Shared actor for parallel execution
     private let operationTracker = OperationTracker.shared
 
     // Root suite ID stored directly (no coordination needed for single bundle)
@@ -32,6 +31,17 @@ open class RPListener: NSObject, XCTestObservation {
     
     // Flag to ensure launch is created only once
     private var isLaunchCreated = false
+    
+    /// The launch gate: a single Task created SYNCHRONOUSLY in `testBundleWillStart`.
+    /// All consumers (testSuiteWillStart, testCaseWillStart) await this Task before
+    /// sending anything to ReportPortal. This eliminates the actor priority inversion
+    /// bug: there's no race because everyone awaits the SAME Task instance.
+    ///
+    /// Why this works: `Task<Void, Never>` is Sendable. It's assigned on main thread
+    /// (where XCTest callbacks run) BEFORE testSuiteWillStart can fire. Even if the
+    /// actor picks a suite-Task first, that Task awaits `launchGate.value` which
+    /// suspends until the gate's body completes — guaranteeing launch exists first.
+    private var launchGate: Task<Void, Never>?
 
     public override init() {
         super.init()
@@ -123,52 +133,71 @@ open class RPListener: NSObject, XCTestObservation {
         let reportingService = ReportingService(configuration: configuration)
         self.reportingService = reportingService
         
-        // Get launch UUID (synchronous access, no API call)
-        // CI/CD Mode: All workers get same UUID from RP_LAUNCH_UUID env var
-        // Local Mode: Each worker generates unique UUID
-        let launchUUID = LaunchManager.shared.launchID
-        Logger.shared.info("📦 Launch UUID resolved (no API call): \(launchUUID)")
+        // Get launch UUID — resolved once per process, stable across all calls.
+        let launchUUID = LaunchUUID.value
+        Logger.shared.info("📦 Launch UUID: \(launchUUID)")
         
-        // Ensure launch is created via V2 API before any suites/tests are reported
-        // This guarantees proper synchronization in parallel execution
-        Task {
-            await LaunchManager.shared.ensureLaunchStarted {
-                // Collect metadata attributes (collectAllAttributes already includes device attributes)
-                var attributes = MetadataCollector.collectAllAttributes(from: testBundle, tags: configuration.tags)
+        // Create the launch gate — a single Task that all subsequent XCTest callbacks
+        // await before touching ReportPortal. Solves the "4 of 6" priority inversion:
+        // XCTest callbacks are synchronous (void return), so we MUST use Task {}. But
+        // by storing ONE gate Task and having all consumers `await gate.value`, we
+        // guarantee ordering without locks or actor scheduling assumptions.
+        let gate = Task { [reportingService] in
+            var attributes = MetadataCollector.collectAllAttributes(from: testBundle, tags: configuration.tags)
 
-                // Resolve merge_group for SauceLabs post-run merge support
-                if let group = RPListener.resolveMergeGroup(from: testBundle) {
-                    attributes.append(["key": "merge_group", "value": group])
+            if let group = RPListener.resolveMergeGroup(from: testBundle) {
+                attributes.append(["key": "merge_group", "value": group])
+            }
+
+            let env = ProcessInfo.processInfo.environment
+            if let runID = [env["RP_CI_RUN_ID"], env["GITHUB_RUN_ID"]]
+                .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) })
+                .first(where: { !$0.isEmpty }) {
+                attributes.append(["key": "ci_run_id", "value": runID])
+            }
+
+            let testPlanName = MetadataCollector.getTestPlanName()
+            let enhancedLaunchName = self.buildEnhancedLaunchName(
+                baseLaunchName: configuration.launchName,
+                testPlanName: testPlanName
+            )
+
+            // Retry with backoff — transient network errors shouldn't kill the whole shard's reporting
+            let maxAttempts = 3
+            for attempt in 1...maxAttempts {
+                do {
+                    let id = try await reportingService.startLaunch(
+                        name: enhancedLaunchName,
+                        tags: configuration.tags,
+                        attributes: attributes,
+                        uuid: launchUUID
+                    )
+                    Logger.shared.info("✅ Launch created: \(id) (attempt \(attempt)/\(maxAttempts))")
+                    return  // success — gate completes, all awaiters unblock
+                } catch let error as HTTPClientError {
+                    if case .httpError(let code, _) = error, code == 409 {
+                        Logger.shared.info("✅ Launch already exists (409) — expected in CI/CD mode")
+                        return
+                    }
+                    if attempt < maxAttempts {
+                        let delay = UInt64(attempt) * 2_000_000_000
+                        Logger.shared.warning("⚠️  startLaunch attempt \(attempt) failed: \(error.localizedDescription). Retrying...")
+                        try? await Task.sleep(nanoseconds: delay)
+                    } else {
+                        Logger.shared.error("❌ startLaunch failed after \(maxAttempts) attempts: \(error.localizedDescription)")
+                    }
+                } catch {
+                    if attempt < maxAttempts {
+                        let delay = UInt64(attempt) * 2_000_000_000
+                        Logger.shared.warning("⚠️  startLaunch attempt \(attempt) failed: \(error.localizedDescription). Retrying...")
+                        try? await Task.sleep(nanoseconds: delay)
+                    } else {
+                        Logger.shared.error("❌ startLaunch failed after \(maxAttempts) attempts: \(error.localizedDescription)")
+                    }
                 }
-
-                // Resolve ci_run_id for concurrent CI run disambiguation.
-                // Pick the first non-empty value: an explicitly empty RP_CI_RUN_ID must not
-                // suppress the GITHUB_RUN_ID fallback.
-                let env = ProcessInfo.processInfo.environment
-                if let runID = [env["RP_CI_RUN_ID"], env["GITHUB_RUN_ID"]]
-                    .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) })
-                    .first(where: { !$0.isEmpty }) {
-                    attributes.append(["key": "ci_run_id", "value": runID])
-                }
-
-                // Get test plan name for launch name enhancement
-                let testPlanName = MetadataCollector.getTestPlanName()
-                let enhancedLaunchName = self.buildEnhancedLaunchName(
-                    baseLaunchName: configuration.launchName,
-                    testPlanName: testPlanName
-                )
-
-                // Create launch via V2 API with predefined UUID
-                // 409 Conflict is handled gracefully by LaunchManager (means launch exists = success)
-                let reportedLaunchID = try await reportingService.startLaunch(
-                    name: enhancedLaunchName,
-                    tags: configuration.tags,
-                    attributes: attributes,
-                    uuid: launchUUID
-                )
-                Logger.shared.info("📡 Launch created via V2 API: \(reportedLaunchID)")
             }
         }
+        self.launchGate = gate
     }
     
     private func buildEnhancedLaunchName(baseLaunchName: String, testPlanName: String?) -> String {
@@ -222,20 +251,15 @@ open class RPListener: NSObject, XCTestObservation {
         
         // Register suite with OperationTracker for parallel execution
         Task {
-            // CRITICAL: Wait for launch to be ready before creating any suites
-            // This ensures V2 API launch exists before we start reporting hierarchy
-            // Using waitUntilReady() since launch creation happens in testBundleWillStart
-            await LaunchManager.shared.waitUntilReady()
-            
-            // Verify launch is actually ready
-            let isReady = await LaunchManager.shared.isReady()
-            guard isReady else {
-                Logger.shared.warning("⚠️  Launch not ready, skipping suite creation for: \(testSuite.name)")
+            // Await the launch gate — guarantees launch API call completed (success or fail)
+            guard let gate = self.launchGate else {
+                Logger.shared.error("❌ launchGate is nil — testBundleWillStart was never called!")
                 return
             }
+            await gate.value
             
             // Get launch ID (synchronous access after launch is ready)
-            let launchID = launchManager.launchID
+            let launchID = LaunchUUID.value
             
             do {
                 let correlationID = UUID()
@@ -335,20 +359,15 @@ open class RPListener: NSObject, XCTestObservation {
         
         // Register test case with OperationTracker for parallel execution
         Task {
-            // CRITICAL: Wait for launch to be ready before creating any tests
-            // This ensures V2 API launch exists before we start reporting tests
-            // Using waitUntilReady() since launch creation happens in testBundleWillStart
-            await LaunchManager.shared.waitUntilReady()
-            
-            // Verify launch is actually ready
-            let isReady = await LaunchManager.shared.isReady()
-            guard isReady else {
-                Logger.shared.warning("⚠️  Launch not ready, skipping test creation for: \(testCase.name)")
+            // Await the launch gate — guarantees launch API call completed (success or fail)
+            guard let gate = self.launchGate else {
+                Logger.shared.error("❌ launchGate is nil — testBundleWillStart was never called!")
                 return
             }
+            await gate.value
             
-            // Get launch ID (synchronous access after launch is ready)
-            let launchID = launchManager.launchID
+            // Get launch ID
+            let launchID = LaunchUUID.value
             
             do {
                 let correlationID = UUID()
@@ -500,7 +519,7 @@ open class RPListener: NSObject, XCTestObservation {
         // Async attachment upload for concurrent execution
         Task {
             // Get launch ID (lazy initialization on first access)
-            let launchID = launchManager.launchID
+            let launchID = LaunchUUID.value
 
             // Build identifier to get test operation
             let testName = extractTestName(from: testCase)
@@ -568,7 +587,7 @@ open class RPListener: NSObject, XCTestObservation {
         // Async attachment upload for concurrent execution
         Task {
             // Get launch ID (lazy initialization on first access)
-            let launchID = launchManager.launchID
+            let launchID = LaunchUUID.value
 
             // Build identifier to get test operation
             let testName = extractTestName(from: testCase)
@@ -731,7 +750,7 @@ open class RPListener: NSObject, XCTestObservation {
             try? await Task.sleep(nanoseconds: 15_000_000_000) // 15 second grace period
             Logger.shared.info("⏰ Grace period completed - proceeding with launch finalization")
             
-            let launchID = launchManager.launchID
+            let launchID = LaunchUUID.value
 
             // ReportPortal will calculate the final status from all test results
             Logger.shared.info("📊 Finalizing launch \(launchID)")

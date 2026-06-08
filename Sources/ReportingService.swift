@@ -30,7 +30,7 @@ extension HTTPClientError {
 }
 
 /// Async/await API for ReportPortal communication (stateless)
-/// Uses LaunchManager and OperationTracker for state management
+/// Uses OperationTracker for state management
 public final class ReportingService: Sendable {
 
     // MARK: - Properties
@@ -95,7 +95,7 @@ public final class ReportingService: Sendable {
 
     /// Finish launch in ReportPortal
     /// - Parameters:
-    ///   - launchID: Launch ID from LaunchManager
+    ///   - launchID: Launch ID from LaunchUUID.value
     ///   - status: Status to send (ReportPortal will calculate actual status from tests)
     func finalizeLaunch(launchID: String, status: TestStatus) async throws {
         do {
@@ -148,7 +148,7 @@ public final class ReportingService: Sendable {
     /// Finish suite item in ReportPortal
     /// - Parameter operation: SuiteOperation with suite ID and final status
     func finishSuite(operation: SuiteOperation) async throws {
-        let launchID = LaunchManager.shared.launchID
+        let launchID = LaunchUUID.value
 
         // Use suite status if available, otherwise default to passed
         let status = operation.status ?? .passed
@@ -192,7 +192,7 @@ public final class ReportingService: Sendable {
             preconditionFailure("Test status should not be nil when finishing test")
         }
         
-        let launchID = LaunchManager.shared.launchID
+        let launchID = LaunchUUID.value
 
         let endPoint = try FinishItemEndPoint(
             itemID: operation.testID,

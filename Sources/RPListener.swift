@@ -173,20 +173,14 @@ open class RPListener: NSObject, XCTestObservation {
                         uuid: launchUUID
                     )
                     Logger.shared.info("✅ Launch created: \(id) (attempt \(attempt)/\(maxAttempts))")
-                    return  // success — gate completes, all awaiters unblock
-                } catch let error as HTTPClientError {
-                    if case .httpError(let code, _) = error, code == 409 {
+                    return
+                } catch {
+                    // 409 = launch already exists (expected in CI/CD with shared UUID)
+                    if let httpError = error as? HTTPClientError,
+                       case .httpError(let code, _) = httpError, code == 409 {
                         Logger.shared.info("✅ Launch already exists (409) — expected in CI/CD mode")
                         return
                     }
-                    if attempt < maxAttempts {
-                        let delay = UInt64(attempt) * 2_000_000_000
-                        Logger.shared.warning("⚠️  startLaunch attempt \(attempt) failed: \(error.localizedDescription). Retrying...")
-                        try? await Task.sleep(nanoseconds: delay)
-                    } else {
-                        Logger.shared.error("❌ startLaunch failed after \(maxAttempts) attempts: \(error.localizedDescription)")
-                    }
-                } catch {
                     if attempt < maxAttempts {
                         let delay = UInt64(attempt) * 2_000_000_000
                         Logger.shared.warning("⚠️  startLaunch attempt \(attempt) failed: \(error.localizedDescription). Retrying...")

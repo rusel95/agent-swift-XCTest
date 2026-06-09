@@ -19,6 +19,9 @@
   (`ci_run_id` attribute to disambiguate concurrent CI runs), by @rusel95.
 - Launch creation retries up to 3 times with exponential backoff on transient
   errors, by @rusel95.
+- `docs/SAUCELABS_SETUP.md` — self-contained guide for the SauceLabs real-device
+  merge: setup steps, the vendorable merge script, a GitHub Actions workflow, and a
+  copy-paste prompt for wiring it into a consuming repo with an AI agent, by @rusel95.
 
 ### Changed
 - `LaunchManager` actor replaced by a caseless `LaunchUUID` enum that resolves the

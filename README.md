@@ -36,7 +36,7 @@ The agent hooks into XCTest via [`XCTestObservation`](https://developer.apple.co
 - 📡 **Zero-touch reporting** — add the agent as your test target's principal class; no test-code changes.
 - 🧱 **Full hierarchy** — launches → suites → test cases, with statuses, durations, logs, and attachments.
 - ⚡ **Parallel-execution ready (v4.0+)** — multiple simulator clones/devices report into a single launch via a shared `RP_LAUNCH_UUID`.
-- ☁️ **SauceLabs real-device merge** — each isolated device creates its own launch; a post-run script (in the consuming project) merges them into one. See [SauceLabs Real-Device Merge](#saucelabs-real-device-merge).
+- ☁️ **SauceLabs real-device merge** — a standout extra on top of all-platform support: each isolated device creates its own launch, and a vendored post-run script merges them into one. Copy-paste guide + script + agent prompt in [docs/SAUCELABS_SETUP.md](docs/SAUCELABS_SETUP.md).
 - 🧩 **Flexible configuration** — env vars override `Info.plist`, with sensible defaults.
 - 🏷️ **Metadata & tags** — device/OS attributes, custom tags, and test-plan-aware launch names.
 - 🔁 **Idempotent finalize** — a launch already finished (HTTP 409) is treated as success, not an error.
@@ -215,9 +215,9 @@ For local Xcode runs that produce separate launches, you can also merge them by 
 
 ## SauceLabs Real-Device Merge
 
-SauceLabs real devices are isolated — they share neither a filesystem nor environment variables, so the simulator-style shared-UUID approach can't work. Instead each device creates its own launch (tagged with a `merge_group`), defers finalization (`ReportPortalSkipFinish`), and a post-run script merges them into one launch.
+SauceLabs real devices are isolated — they share neither a filesystem nor environment variables, so the simulator-style shared-UUID approach can't work. Instead each device creates its own launch tagged with a **run-unique `merge_group`**, each device finalizes its own launch normally (leave `ReportPortalSkipFinish` **off**), and after the run a small post-run script merges exactly that run's launches into one.
 
-The merge scripts and CI workflow examples live in the consuming project (not in this library).
+👉 **Full copy-paste recipe** — setup steps, the merge script to vendor, a GitHub Actions workflow, and a prompt you can hand to your AI coding agent to wire it into your own repo — is in **[docs/SAUCELABS_SETUP.md](docs/SAUCELABS_SETUP.md)**.
 
 ## How It Works
 

@@ -31,6 +31,15 @@ The **only** configuration that survives to the device is what is **compiled int
 **The approach:** each device creates its own launch tagged with a shared, **run-unique**
 `merge_group`; after all shards finish, a post-run merge step combines exactly this run's launches.
 
+> **Orphan launches & the "3 of 6" symptom.** Occasionally ReportPortal auto-creates a *bare*
+> launch from a device's first test-item POST before that device's `startLaunch` registers the
+> attributes — so the launch ends up with **no `merge_group`** and the merge can't find it. This is
+> timing-dependent, which is why a run can merge cleanly one time and miss shards the next. The
+> agent now closes this at the source: when `startLaunch` gets a 409 (the bare launch already holds
+> its UUID), it **back-fills the full attribute set (including `merge_group`) onto that launch**, so
+> every device's launch is mergeable regardless of who won the create race. The merge script's
+> time-window orphan patching (below) remains as a secondary safety net.
+
 ---
 
 ## Quick Start

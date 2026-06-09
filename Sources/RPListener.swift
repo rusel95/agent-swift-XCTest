@@ -182,10 +182,20 @@ open class RPListener: NSObject, XCTestObservation {
                     Logger.shared.info("✅ Launch created: \(id) (attempt \(attempt)/\(maxAttempts))")
                     return true
                 } catch {
-                    // 409 = launch already exists (expected in CI/CD with shared UUID)
+                    // 409 = a launch with this UUID already exists. Two cases:
+                    //   1. CI/CD with a shared RP_LAUNCH_UUID — another worker created it (expected).
+                    //   2. Real-device farms (SauceLabs) — RP auto-created a bare "orphan" launch
+                    //      from the first test-item POST before startLaunch ran, so it has none of
+                    //      our attributes (no merge_group) and the post-run merge can't find it.
+                    // Back-fill the attributes onto the existing launch so it merges in both cases.
                     if let httpError = error as? HTTPClientError,
                        case .httpError(let code, _) = httpError, code == 409 {
-                        Logger.shared.info("✅ Launch already exists (409) — expected in CI/CD mode")
+                        Logger.shared.info("✅ Launch already exists (409) — back-filling attributes onto it")
+                        do {
+                            try await reportingService.patchLaunchAttributes(uuid: launchUUID, attributes: attributes)
+                        } catch {
+                            Logger.shared.warning("⚠️  Could not back-fill attributes onto launch \(launchUUID): \(error.localizedDescription)")
+                        }
                         return true
                     }
                     if attempt < maxAttempts {

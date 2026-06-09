@@ -135,3 +135,34 @@ final class IdempotentFinalizeLaunchTests: XCTestCase {
                        "Decoding errors must propagate")
     }
 }
+
+// MARK: - Orphan-launch attribute back-fill endpoints
+
+/// Verifies the two endpoints behind `patchLaunchAttributes`, which back-fills attributes
+/// (e.g. `merge_group`) onto an orphan launch when `startLaunch` returns 409.
+final class OrphanLaunchBackfillEndpointTests: XCTestCase {
+
+    func testGetLaunchByUuidEndPoint_PathAndMethod() {
+        let endPoint = GetLaunchByUuidEndPoint(uuid: "abc-123")
+        XCTAssertEqual(endPoint.method, .get)
+        XCTAssertEqual(endPoint.relativePath, "launch/uuid/abc-123",
+                       "Must resolve the numeric id via GET launch/uuid/{uuid}")
+    }
+
+    func testUpdateLaunchEndPoint_PathMethodAndAttributes() {
+        let attributes = [
+            ["key": "merge_group", "value": "regression-42"],
+            ["key": "ci_run_id", "value": "42"]
+        ]
+        let endPoint = UpdateLaunchEndPoint(launchID: 777, attributes: attributes)
+
+        XCTAssertEqual(endPoint.method, .put)
+        XCTAssertEqual(endPoint.relativePath, "launch/777/update",
+                       "Update is keyed by the numeric launch id, not the UUID")
+
+        let sent = endPoint.parameters["attributes"] as? [[String: String]]
+        XCTAssertEqual(sent?.count, 2)
+        XCTAssertEqual(sent?.first?["key"], "merge_group")
+        XCTAssertEqual(sent?.first?["value"], "regression-42")
+    }
+}

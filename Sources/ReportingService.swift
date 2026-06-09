@@ -111,6 +111,27 @@ public final class ReportingService: Sendable {
         }
     }
 
+    /// Back-fill attributes onto an existing launch.
+    ///
+    /// On real-device farms (SauceLabs), ReportPortal can auto-create a bare "orphan"
+    /// launch from the first test-item POST that references a launch UUID it hasn't seen
+    /// yet — a race the launch gate narrows but can't fully close across the network.
+    /// That orphan has none of our attributes (no `merge_group`), so the post-run merge
+    /// script — which finds launches by `merge_group` — can't see it. When `startLaunch`
+    /// then returns 409 (the orphan already holds our UUID), we resolve the orphan's
+    /// numeric id from its UUID and PUT the full attribute set onto it, making it
+    /// mergeable like a normally-created launch.
+    /// - Parameters:
+    ///   - uuid: The launch UUID (same one `startLaunch` used).
+    ///   - attributes: The full attribute set to apply (metadata + `merge_group` + `ci_run_id`).
+    func patchLaunchAttributes(uuid: String, attributes: [[String: String]]) async throws {
+        let launch: Launch = try await httpClient.callEndPoint(GetLaunchByUuidEndPoint(uuid: uuid))
+        let _: LaunchUpdateResponse = try await httpClient.callEndPoint(
+            UpdateLaunchEndPoint(launchID: launch.id, attributes: attributes)
+        )
+        Logger.shared.info("📎 Back-filled \(attributes.count) attribute(s) onto existing launch \(uuid) (id: \(launch.id))")
+    }
+
     // MARK: - Suite Management
 
     /// Create suite item in ReportPortal
@@ -351,4 +372,40 @@ public final class ReportingService: Sendable {
 
         Logger.shared.info("Uploaded \(fileAttachments.count) attachments to item: \(itemID)", correlationID: correlationID)
     }
+}
+
+// MARK: - Orphan-launch attribute back-fill (SauceLabs)
+//
+// These two endpoints support `patchLaunchAttributes(uuid:attributes:)`. They live here
+// (rather than in Sources/EndPoints/) so both SPM and the Xcode project compile them
+// without a project-file change.
+
+/// `GET launch/uuid/{uuid}` — resolve a launch's numeric `id` from its UUID.
+/// (ReportPortal's update endpoint is keyed by the numeric id, not the UUID.)
+struct GetLaunchByUuidEndPoint: EndPoint {
+    let method: HTTPMethod = .get
+    let relativePath: String
+
+    init(uuid: String) {
+        relativePath = "launch/uuid/\(uuid)"
+    }
+}
+
+/// `PUT launch/{id}/update` — replace a launch's attributes (used to back-fill
+/// `merge_group` and metadata onto an orphan launch so the post-run merge can find it).
+struct UpdateLaunchEndPoint: EndPoint {
+    let method: HTTPMethod = .put
+    let relativePath: String
+    let parameters: [String: Any]
+
+    init(launchID: Int, attributes: [[String: String]]) {
+        relativePath = "launch/\(launchID)/update"
+        parameters = ["attributes": attributes]
+    }
+}
+
+/// Lenient response for `PUT launch/{id}/update` (ReportPortal returns `{ "message": ... }`).
+/// All-optional so a differently-shaped success body still decodes.
+struct LaunchUpdateResponse: Decodable {
+    let message: String?
 }

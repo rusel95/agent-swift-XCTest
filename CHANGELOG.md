@@ -11,6 +11,12 @@
   by @rusel95.
 - Launch finalization treats only HTTP 409 (already finished) as non-fatal; every
   other HTTP status and non-HTTP error now propagates, by @rusel95.
+- Orphan-launch attribute back-fill: when `startLaunch` returns 409 (a launch with the
+  same UUID already exists — e.g. an "orphan" ReportPortal auto-created from the first
+  test-item POST on a real-device farm), the agent now resolves that launch's numeric id
+  and PUTs the full attribute set onto it, so `merge_group` is present and the post-run
+  merge can find it. Previously such launches stayed attribute-less and were skipped by
+  the merge ("3 of 6"), by @rusel95.
 
 ### Added
 - SauceLabs real-device merge support: `RP_MERGE_GROUP` / `ReportPortalMergeGroup`

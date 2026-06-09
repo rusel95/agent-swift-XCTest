@@ -18,7 +18,17 @@ import XCTest
 
 open class RPListener: NSObject, XCTestObservation {
 
-    private var reportingService: ReportingService?
+    private var reportingService: (any ReportingServiceProtocol)?
+
+    /// Test seam: factory for the reporting service. Production uses the real
+    /// `ReportingService`; unit tests inject a recording double to assert call ordering.
+    var makeReportingService: (AgentConfiguration) -> any ReportingServiceProtocol = {
+        ReportingService(configuration: $0)
+    }
+
+    /// Test seam: when set, used instead of reading the bundle's `Info.plist`, so ordering
+    /// tests don't need a configured test bundle. `nil` in production.
+    private var injectedConfiguration: AgentConfiguration?
 
     // Shared actor for parallel execution
     private let operationTracker = OperationTracker.shared
@@ -50,11 +60,22 @@ open class RPListener: NSObject, XCTestObservation {
 
     public override init() {
         super.init()
-        
+
         // XCTestObservationCenter requires main thread for observer registration
         // init() is typically called on main thread, but ensure it with precondition
         dispatchPrecondition(condition: .onQueue(.main))
         XCTestObservationCenter.shared.addTestObserver(self)
+    }
+
+    /// Test-only initializer: injects a configuration + a reporting-service factory and
+    /// deliberately SKIPS `XCTestObservationCenter` registration, so a test can drive the
+    /// observation callbacks directly without the listener also reacting to the test run
+    /// itself. Never used in production (the public `init()` is the only registered path).
+    init(injectedConfiguration: AgentConfiguration,
+         makeReportingService: @escaping (AgentConfiguration) -> any ReportingServiceProtocol) {
+        self.injectedConfiguration = injectedConfiguration
+        self.makeReportingService = makeReportingService
+        super.init()
     }
     
     private func readConfiguration(from testBundle: Bundle) -> AgentConfiguration {
@@ -118,7 +139,7 @@ open class RPListener: NSObject, XCTestObservation {
     }
     
     public func testBundleWillStart(_ testBundle: Bundle) {
-        let configuration = readConfiguration(from: testBundle)
+        let configuration = injectedConfiguration ?? readConfiguration(from: testBundle)
         
         guard configuration.shouldSendReport else {
             Logger.shared.warning("⚠️ Reporting disabled: Set 'YES' for 'PushTestDataToReportPortal' in Info.plist to enable ReportPortal reporting")
@@ -135,7 +156,7 @@ open class RPListener: NSObject, XCTestObservation {
         Logger.shared.info("🎬 First bundle start detected - initializing ReportPortal reporting")
         
         // Create service for v4.0.0 async/await parallel execution
-        let reportingService = ReportingService(configuration: configuration)
+        let reportingService = makeReportingService(configuration)
         self.reportingService = reportingService
         
         // Get launch UUID — resolved once per process, stable across all calls.

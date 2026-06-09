@@ -166,3 +166,125 @@ final class OrphanLaunchBackfillEndpointTests: XCTestCase {
         XCTAssertEqual(sent?.first?["value"], "regression-42")
     }
 }
+
+// MARK: - Launch-gate ordering (the "attribute-less orphan / N of 6" bug)
+
+/// Records the ORDER in which `RPListener` calls ReportPortal, so a test can prove the launch
+/// is created BEFORE any suite/test item is sent. If a suite/test is sent first, ReportPortal
+/// auto-creates a bare launch with no `merge_group` — the orphan that the post-run merge can't
+/// find. `startLaunch` sleeps briefly to mimic network latency, so a *missing* gate-await would
+/// visibly record a suite before the launch.
+final class RecordingReportingService: ReportingServiceProtocol, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _calls: [String] = []
+    private var _launchAttributes: [[String: String]] = []
+
+    /// Ordered log of operations, e.g. ["startLaunch", "startSuite", ...].
+    var calls: [String] { lock.lock(); defer { lock.unlock() }; return _calls }
+    /// The attributes passed to `startLaunch` (to assert `merge_group` is sent with the launch).
+    var launchAttributes: [[String: String]] { lock.lock(); defer { lock.unlock() }; return _launchAttributes }
+
+    private func record(_ op: String) { lock.lock(); _calls.append(op); lock.unlock() }
+
+    func startLaunch(name: String, tags: [String], attributes: [[String: String]], uuid: String) async throws -> String {
+        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms: make a missing gate-await observable
+        lock.lock(); _launchAttributes = attributes; lock.unlock()
+        record("startLaunch")
+        return uuid
+    }
+    func patchLaunchAttributes(uuid: String, attributes: [[String: String]]) async throws { record("patchLaunchAttributes") }
+    func startSuite(operation: SuiteOperation, launchID: String) async throws -> String { record("startSuite"); return UUID().uuidString }
+    func finishSuite(operation: SuiteOperation) async throws { record("finishSuite") }
+    func startTest(operation: TestOperation, launchID: String) async throws -> String { record("startTest"); return UUID().uuidString }
+    func finishTest(operation: TestOperation) async throws { record("finishTest") }
+    func postLog(message: String, level: String, itemID: String, launchID: String, correlationID: UUID?) async throws { record("postLog") }
+    func postScreenshot(screenshotData: Data, filename: String, itemID: String, launchID: String, correlationID: UUID?) async throws { record("postScreenshot") }
+    func finalizeLaunch(launchID: String, status: TestStatus) async throws { record("finalizeLaunch") }
+}
+
+/// Drives the real `RPListener` XCTest callbacks (via a test init that skips observer
+/// registration) against the recording double, and asserts the launch-before-items ordering.
+final class LaunchGateOrderingTests: XCTestCase {
+
+    private func makeConfig() -> AgentConfiguration {
+        AgentConfiguration(
+            reportPortalURL: URL(string: "https://example.invalid")!,
+            projectName: "proj",
+            launchName: "Launch",
+            shouldSendReport: true,
+            portalToken: "token",
+            tags: [],
+            launchMode: .default,
+            testNameRules: []
+        )
+    }
+
+    /// Poll until `condition` holds or the timeout elapses (RPListener fires unstructured Tasks).
+    private func wait(timeout: TimeInterval = 5, until condition: @escaping () -> Bool) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 25_000_000)
+        }
+    }
+
+    func testLaunchIsCreatedBeforeAnySuiteIsSent() async {
+        setenv("RP_MERGE_GROUP", "test-mg-ordering", 1)
+        defer { unsetenv("RP_MERGE_GROUP") }
+
+        let recorder = RecordingReportingService()
+        let listener = RPListener(injectedConfiguration: makeConfig(), makeReportingService: { _ in recorder })
+
+        listener.testBundleWillStart(Bundle(for: RecordingReportingService.self))
+        listener.testSuiteWillStart(XCTestSuite(name: "CheckoutFeatureTests"))
+
+        await wait { recorder.calls.contains("startSuite") }
+
+        let calls = recorder.calls
+        guard let launchIdx = calls.firstIndex(of: "startLaunch") else {
+            return XCTFail("startLaunch was never called — launch not created. Calls: \(calls)")
+        }
+        guard let suiteIdx = calls.firstIndex(of: "startSuite") else {
+            return XCTFail("startSuite was never called within timeout. Calls: \(calls)")
+        }
+        XCTAssertLessThan(launchIdx, suiteIdx,
+            "Launch must be created BEFORE any suite is sent (else RP creates an attribute-less orphan). Order: \(calls)")
+        XCTAssertTrue(
+            recorder.launchAttributes.contains { $0["key"] == "merge_group" && $0["value"] == "test-mg-ordering" },
+            "merge_group must be sent WITH startLaunch so the launch is mergeable. Got: \(recorder.launchAttributes)")
+
+        withExtendedLifetime(listener) {}
+    }
+
+    func testEveryConcurrentListenerCreatesItsLaunchFirst() async {
+        setenv("RP_MERGE_GROUP", "test-mg-parallel", 1)
+        defer { unsetenv("RP_MERGE_GROUP") }
+
+        // Simulate N parallel "devices": N independent listeners, each with its own launch.
+        let deviceCount = 8
+        var recorders: [RecordingReportingService] = []
+        var listeners: [RPListener] = []
+        for i in 0..<deviceCount {
+            let recorder = RecordingReportingService()
+            let listener = RPListener(injectedConfiguration: makeConfig(), makeReportingService: { _ in recorder })
+            recorders.append(recorder)
+            listeners.append(listener)
+            listener.testBundleWillStart(Bundle(for: RecordingReportingService.self))
+            listener.testSuiteWillStart(XCTestSuite(name: "Device\(i)Tests"))
+        }
+
+        await wait(timeout: 10) { recorders.allSatisfy { $0.calls.contains("startSuite") } }
+
+        for (i, recorder) in recorders.enumerated() {
+            let calls = recorder.calls
+            guard let launchIdx = calls.firstIndex(of: "startLaunch"),
+                  let suiteIdx = calls.firstIndex(of: "startSuite") else {
+                XCTFail("Device \(i): missing startLaunch/startSuite within timeout. Calls: \(calls)")
+                continue
+            }
+            XCTAssertLessThan(launchIdx, suiteIdx,
+                "Device \(i): a suite was sent before the launch was created. Order: \(calls)")
+        }
+
+        withExtendedLifetime(listeners) {}
+    }
+}

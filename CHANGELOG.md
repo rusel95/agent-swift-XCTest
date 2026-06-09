@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- Orphan-launch back-fill now targets the **v1** API. ReportPortal's launch read/update
+  endpoints (`GET launch/uuid/{uuid}`, `PUT launch/{id}/update`) only exist under `/api/v1`,
+  but the agent's client is pinned to `/api/v2` (start/finish/merge) — so the back-fill's two
+  calls were hitting v2 and failing (no-op). They now use a dedicated v1 client, so attributes
+  are actually applied to an orphan launch, by @rusel95.
+
 ## [4.1.0] - 2026-06-09
 
 ### Fixed

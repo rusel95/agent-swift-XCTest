@@ -36,6 +36,11 @@ public final class ReportingService: Sendable {
     // MARK: - Properties
 
     private let httpClient: HTTPClient
+    /// Separate client pinned to the **v1** API. ReportPortal's launch *read* and *update*
+    /// endpoints (`GET launch/uuid/{uuid}`, `PUT launch/{id}/update`) only exist under
+    /// `/api/v1`, while `httpClient` is pinned to `/api/v2` (start/finish/merge). Used by
+    /// `patchLaunchAttributes` to back-fill attributes onto an orphan launch.
+    private let httpClientV1: HTTPClient
     private let configuration: AgentConfiguration
     private let operationTracker: OperationTracker
 
@@ -55,12 +60,20 @@ public final class ReportingService: Sendable {
             .appendingPathComponent("api")
             .appendingPathComponent("v2")
             .appendingPathComponent(configuration.projectName)
+        // V1 base — for launch read/update (those endpoints don't exist under v2).
+        let baseURLV1 = configuration.reportPortalURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("v1")
+            .appendingPathComponent(configuration.projectName)
 
         if let client = httpClient {
+            // Injected (tests): reuse the same client for both — unit tests don't hit v1 live.
             self.httpClient = client
+            self.httpClientV1 = client
         } else {
             let authPlugin = AuthorizationPlugin(token: configuration.portalToken)
             self.httpClient = HTTPClient(baseURL: baseURL, plugins: [authPlugin])
+            self.httpClientV1 = HTTPClient(baseURL: baseURLV1, plugins: [authPlugin])
         }
     }
 
@@ -125,8 +138,8 @@ public final class ReportingService: Sendable {
     ///   - uuid: The launch UUID (same one `startLaunch` used).
     ///   - attributes: The full attribute set to apply (metadata + `merge_group` + `ci_run_id`).
     func patchLaunchAttributes(uuid: String, attributes: [[String: String]]) async throws {
-        let launch: Launch = try await httpClient.callEndPoint(GetLaunchByUuidEndPoint(uuid: uuid))
-        let _: LaunchUpdateResponse = try await httpClient.callEndPoint(
+        let launch: Launch = try await httpClientV1.callEndPoint(GetLaunchByUuidEndPoint(uuid: uuid))
+        let _: LaunchUpdateResponse = try await httpClientV1.callEndPoint(
             UpdateLaunchEndPoint(launchID: launch.id, attributes: attributes)
         )
         Logger.shared.info("📎 Back-filled \(attributes.count) attribute(s) onto existing launch \(uuid) (id: \(launch.id))")
@@ -409,3 +422,25 @@ struct UpdateLaunchEndPoint: EndPoint {
 struct LaunchUpdateResponse: Decodable {
     let message: String?
 }
+
+// MARK: - ReportingServiceProtocol (ordering test seam)
+//
+// `RPListener` depends on this protocol rather than the concrete `ReportingService`, so unit
+// tests can inject a recording double and assert the ORDER of ReportPortal calls — in
+// particular that the launch is created BEFORE any suite/test item is sent (the "attribute-less
+// orphan" bug). This is a pure abstraction: `ReportingService` already implements every method,
+// so production behavior is unchanged. Kept here (not a new file) so the Xcode project compiles
+// it without a project-file change.
+protocol ReportingServiceProtocol: Sendable {
+    func startLaunch(name: String, tags: [String], attributes: [[String: String]], uuid: String) async throws -> String
+    func patchLaunchAttributes(uuid: String, attributes: [[String: String]]) async throws
+    func startSuite(operation: SuiteOperation, launchID: String) async throws -> String
+    func finishSuite(operation: SuiteOperation) async throws
+    func startTest(operation: TestOperation, launchID: String) async throws -> String
+    func finishTest(operation: TestOperation) async throws
+    func postLog(message: String, level: String, itemID: String, launchID: String, correlationID: UUID?) async throws
+    func postScreenshot(screenshotData: Data, filename: String, itemID: String, launchID: String, correlationID: UUID?) async throws
+    func finalizeLaunch(launchID: String, status: TestStatus) async throws
+}
+
+extension ReportingService: ReportingServiceProtocol {}

@@ -17,7 +17,7 @@
 		85529CE62EA90BD20080536D /* Launch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FEE06D212E926400ADB1ED /* Launch.swift */; };
 		85529CE72EA90BD20080536D /* LogResponse.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FEE06C1000000000000000 /* LogResponse.swift */; };
 		85529CE82EA90BD20080536D /* Finish.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CD72EA909770080536D /* Finish.swift */; };
-		85529CE92EA90BD20080536D /* LaunchManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CCF2EA9092D0080536D /* LaunchManager.swift */; };
+		85529CE92EA90BD20080536D /* LaunchUUID.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CCF2EA9092D0080536D /* LaunchUUID.swift */; };
 		85529CEA2EA90BD20080536D /* TestOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CD52EA909650080536D /* TestOperation.swift */; };
 		85529CEB2EA90BD20080536D /* FinishLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CDB2EA909990080536D /* FinishLaunch.swift */; };
 		85529CEC2EA90BD20080536D /* NameRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85529CDF2EA909DA0080536D /* NameRules.swift */; };
@@ -99,7 +99,7 @@
 		368751E21F596BC70021B74D /* ReportPortal.podspec */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = ReportPortal.podspec; sourceTree = "<group>"; };
 		368751E41F596E990021B74D /* LICENSE */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		851D90F82EB14A3B0026437F /* OperationTrackerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperationTrackerTests.swift; sourceTree = "<group>"; };
-		85529CCF2EA9092D0080536D /* LaunchManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchManager.swift; sourceTree = "<group>"; };
+		85529CCF2EA9092D0080536D /* LaunchUUID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchUUID.swift; sourceTree = "<group>"; };
 		85529CD12EA9094F0080536D /* OperationTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperationTracker.swift; sourceTree = "<group>"; };
 		85529CD32EA9095F0080536D /* SuiteOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuiteOperation.swift; sourceTree = "<group>"; };
 		85529CD52EA909650080536D /* TestOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestOperation.swift; sourceTree = "<group>"; };
@@ -278,7 +278,7 @@
 				85529CDB2EA909990080536D /* FinishLaunch.swift */,
 				92FEE06B212E925D00ADB1ED /* Item.swift */,
 				92FEE06D212E926400ADB1ED /* Launch.swift */,
-				85529CCF2EA9092D0080536D /* LaunchManager.swift */,
+				85529CCF2EA9092D0080536D /* LaunchUUID.swift */,
 				92FEE06C1000000000000000 /* LogResponse.swift */,
 				85529CDF2EA909DA0080536D /* NameRules.swift */,
 				85529CD32EA9095F0080536D /* SuiteOperation.swift */,
@@ -500,7 +500,7 @@
 				85529CE62EA90BD20080536D /* Launch.swift in Sources */,
 				85529CE72EA90BD20080536D /* LogResponse.swift in Sources */,
 				85529CE82EA90BD20080536D /* Finish.swift in Sources */,
-				85529CE92EA90BD20080536D /* LaunchManager.swift in Sources */,
+				85529CE92EA90BD20080536D /* LaunchUUID.swift in Sources */,
 				85529CEA2EA90BD20080536D /* TestOperation.swift in Sources */,
 				85529CEB2EA90BD20080536D /* FinishLaunch.swift in Sources */,
 				85529CEC2EA90BD20080536D /* NameRules.swift in Sources */,

@@ -36,7 +36,7 @@ enum LaunchUUID {
             return ciUUID
         }
         let uuid = UUID().uuidString
-        Logger.shared.info("📦 [Device Mode] Generated launch UUID: \(uuid)")
+        Logger.shared.info("📦 [Per-Process Mode] Generated launch UUID: \(uuid) (this process gets its own launch)")
         return uuid
     }()
 }

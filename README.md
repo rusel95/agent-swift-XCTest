@@ -25,7 +25,6 @@ The agent hooks into XCTest via [`XCTestObservation`](https://developer.apple.co
 - [Parallel Test Execution (v4.0+)](#parallel-test-execution-v40)
 - [SauceLabs Real-Device Merge](#saucelabs-real-device-merge)
 - [How It Works](#how-it-works)
-- [Documentation](#documentation)
 - [Contributing](#contributing)
 - [Authors](#authors)
 - [License](#license)
@@ -37,7 +36,7 @@ The agent hooks into XCTest via [`XCTestObservation`](https://developer.apple.co
 - 📡 **Zero-touch reporting** — add the agent as your test target's principal class; no test-code changes.
 - 🧱 **Full hierarchy** — launches → suites → test cases, with statuses, durations, logs, and attachments.
 - ⚡ **Parallel-execution ready (v4.0+)** — multiple simulator clones/devices report into a single launch via a shared `RP_LAUNCH_UUID`.
-- ☁️ **SauceLabs real-device merge** — each isolated device creates its own launch; a post-run script merges them into one ([guide](docs/SAUCELABS_SETUP.md)).
+- ☁️ **SauceLabs real-device merge** — each isolated device creates its own launch; a post-run script (in the consuming project) merges them into one. See [SauceLabs Real-Device Merge](#saucelabs-real-device-merge).
 - 🧩 **Flexible configuration** — env vars override `Info.plist`, with sensible defaults.
 - 🏷️ **Metadata & tags** — device/OS attributes, custom tags, and test-plan-aware launch names.
 - 🔁 **Idempotent finalize** — a launch already finished (HTTP 409) is treated as success, not an error.
@@ -69,7 +68,7 @@ https://github.com/reportportal/agent-swift-XCTest.git
 Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/reportportal/agent-swift-XCTest.git", from: "4.0.0")
+.package(url: "https://github.com/reportportal/agent-swift-XCTest.git", from: "4.1.0")
 ```
 
 ```swift

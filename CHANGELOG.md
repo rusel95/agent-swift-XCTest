@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-06-09
+
+### Fixed
+- Launch gate eliminates the actor priority inversion that caused some parallel
+  shards to lose all attributes ("merged 4 of 6"). Suites/tests now await a single
+  launch-creation Task and skip reporting when launch creation ultimately fails,
+  by @rusel95.
+- Launch finalization treats only HTTP 409 (already finished) as non-fatal; every
+  other HTTP status and non-HTTP error now propagates, by @rusel95.
+
+### Added
+- SauceLabs real-device merge support: `RP_MERGE_GROUP` / `ReportPortalMergeGroup`
+  (`merge_group` attribute), `RP_SKIP_FINISH` / `ReportPortalSkipFinish` (defer
+  finalization to a post-run merge script), and `RP_CI_RUN_ID` / `GITHUB_RUN_ID`
+  (`ci_run_id` attribute to disambiguate concurrent CI runs), by @rusel95.
+- Launch creation retries up to 3 times with exponential backoff on transient
+  errors, by @rusel95.
+
+### Changed
+- `LaunchManager` actor replaced by a caseless `LaunchUUID` enum that resolves the
+  per-process launch UUID once (`RP_LAUNCH_UUID` env var or auto-generated), by @rusel95.
+- CocoaPod deployment targets lowered to the library's actual floor — iOS 15 /
+  macOS 12 / tvOS 15 — to match `Package.swift`. The podspec previously
+  over-declared iOS 18.6 / macOS 14.0 / tvOS 18.2, by @rusel95.
+
+### Removed
+- Unused `GetCurrentLaunchEndPoint` (dead after the V2 API migration), by @rusel95.
+
 ## [4.0.1] - 2025-12-12
 
 ## [4.0.0] - 2025-11-21

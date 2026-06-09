@@ -37,11 +37,16 @@ open class RPListener: NSObject, XCTestObservation {
     /// sending anything to ReportPortal. This eliminates the actor priority inversion
     /// bug: there's no race because everyone awaits the SAME Task instance.
     ///
-    /// Why this works: `Task<Void, Never>` is Sendable. It's assigned on main thread
+    /// Its value is `true` when the launch was created (or already existed, 409) and
+    /// `false` when launch creation failed after all retries. Consumers must skip
+    /// reporting when it's `false` — otherwise they'd send suites/tests against a
+    /// launch that does not exist, producing a cascade of failing child-item calls.
+    ///
+    /// Why this works: `Task<Bool, Never>` is Sendable. It's assigned on main thread
     /// (where XCTest callbacks run) BEFORE testSuiteWillStart can fire. Even if the
     /// actor picks a suite-Task first, that Task awaits `launchGate.value` which
     /// suspends until the gate's body completes — guaranteeing launch exists first.
-    private var launchGate: Task<Void, Never>?
+    private var launchGate: Task<Bool, Never>?
 
     public override init() {
         super.init()
@@ -142,7 +147,9 @@ open class RPListener: NSObject, XCTestObservation {
         // XCTest callbacks are synchronous (void return), so we MUST use Task {}. But
         // by storing ONE gate Task and having all consumers `await gate.value`, we
         // guarantee ordering without locks or actor scheduling assumptions.
-        let gate = Task { [reportingService] in
+        // Capture only Sendable values — no `self` — so the gate Task does not retain
+        // the observer (and so it compiles cleanly under strict concurrency checking).
+        let gate = Task { [reportingService] () -> Bool in
             var attributes = MetadataCollector.collectAllAttributes(from: testBundle, tags: configuration.tags)
 
             if let group = RPListener.resolveMergeGroup(from: testBundle) {
@@ -157,7 +164,7 @@ open class RPListener: NSObject, XCTestObservation {
             }
 
             let testPlanName = MetadataCollector.getTestPlanName()
-            let enhancedLaunchName = self.buildEnhancedLaunchName(
+            let enhancedLaunchName = RPListener.buildEnhancedLaunchName(
                 baseLaunchName: configuration.launchName,
                 testPlanName: testPlanName
             )
@@ -173,13 +180,13 @@ open class RPListener: NSObject, XCTestObservation {
                         uuid: launchUUID
                     )
                     Logger.shared.info("✅ Launch created: \(id) (attempt \(attempt)/\(maxAttempts))")
-                    return
+                    return true
                 } catch {
                     // 409 = launch already exists (expected in CI/CD with shared UUID)
                     if let httpError = error as? HTTPClientError,
                        case .httpError(let code, _) = httpError, code == 409 {
                         Logger.shared.info("✅ Launch already exists (409) — expected in CI/CD mode")
-                        return
+                        return true
                     }
                     if attempt < maxAttempts {
                         let delay = UInt64(attempt) * 2_000_000_000
@@ -190,11 +197,13 @@ open class RPListener: NSObject, XCTestObservation {
                     }
                 }
             }
+            // All attempts exhausted — launch does not exist; consumers must not report.
+            return false
         }
         self.launchGate = gate
     }
     
-    private func buildEnhancedLaunchName(baseLaunchName: String, testPlanName: String?) -> String {
+    static func buildEnhancedLaunchName(baseLaunchName: String, testPlanName: String?) -> String {
         if let testPlan = testPlanName, !testPlan.isEmpty {
             let sanitizedTestPlan = testPlan.replacingOccurrences(of: " ", with: "_")
             return "\(baseLaunchName): \(sanitizedTestPlan)"
@@ -245,13 +254,17 @@ open class RPListener: NSObject, XCTestObservation {
         
         // Register suite with OperationTracker for parallel execution
         Task {
-            // Await the launch gate — guarantees launch API call completed (success or fail)
+            // Await the launch gate — guarantees launch creation finished. Skip reporting
+            // if it failed: the launch doesn't exist, so child-item calls would all fail.
             guard let gate = self.launchGate else {
                 Logger.shared.error("❌ launchGate is nil — testBundleWillStart was never called!")
                 return
             }
-            await gate.value
-            
+            guard await gate.value else {
+                Logger.shared.warning("⚠️  Launch was not created — skipping suite: \(testSuite.name)")
+                return
+            }
+
             // Get launch ID (synchronous access after launch is ready)
             let launchID = LaunchUUID.value
             
@@ -353,13 +366,17 @@ open class RPListener: NSObject, XCTestObservation {
         
         // Register test case with OperationTracker for parallel execution
         Task {
-            // Await the launch gate — guarantees launch API call completed (success or fail)
+            // Await the launch gate — guarantees launch creation finished. Skip reporting
+            // if it failed: the launch doesn't exist, so child-item calls would all fail.
             guard let gate = self.launchGate else {
                 Logger.shared.error("❌ launchGate is nil — testBundleWillStart was never called!")
                 return
             }
-            await gate.value
-            
+            guard await gate.value else {
+                Logger.shared.warning("⚠️  Launch was not created — skipping test: \(testCase.name)")
+                return
+            }
+
             // Get launch ID
             let launchID = LaunchUUID.value
             

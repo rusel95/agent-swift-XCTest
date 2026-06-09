@@ -810,14 +810,22 @@ open class RPListener: NSObject, XCTestObservation {
     /// Resolve mergeGroup: (1) RP_MERGE_GROUP env var, (2) ReportPortalMergeGroup Info.plist.
     /// Static so it can be unit-tested without instantiating an observer.
     static func resolveMergeGroup(from testBundle: Bundle?) -> String? {
-        if let envValue = ProcessInfo.processInfo.environment["RP_MERGE_GROUP"], !envValue.isEmpty {
-            Logger.shared.info("📎 merge_group from env var: \(envValue)")
-            return envValue
+        // Trim and treat whitespace-only as "not set" — consistent with LaunchUUID and
+        // the ci_run_id resolution, so RP_MERGE_GROUP=" " falls through instead of
+        // becoming a bogus group attribute.
+        if let envValue = ProcessInfo.processInfo.environment["RP_MERGE_GROUP"] {
+            let trimmed = envValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                Logger.shared.info("📎 merge_group from env var: \(trimmed)")
+                return trimmed
+            }
         }
-        if let plistValue = testBundle?.object(forInfoDictionaryKey: "ReportPortalMergeGroup") as? String,
-           !plistValue.isEmpty {
-            Logger.shared.info("📎 merge_group from Info.plist: \(plistValue)")
-            return plistValue
+        if let plistValue = testBundle?.object(forInfoDictionaryKey: "ReportPortalMergeGroup") as? String {
+            let trimmed = plistValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                Logger.shared.info("📎 merge_group from Info.plist: \(trimmed)")
+                return trimmed
+            }
         }
         return nil
     }

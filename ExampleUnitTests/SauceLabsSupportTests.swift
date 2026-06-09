@@ -167,6 +167,37 @@ final class OrphanLaunchBackfillEndpointTests: XCTestCase {
     }
 }
 
+// MARK: - No legacy "tags" field (the REAL "launch lost all attributes" bug)
+
+/// ReportPortal's `StartRQ` declares `@JsonAlias({"attributes","tags"})` — both JSON fields
+/// deserialize into the SAME server-side property, and Jackson keeps whichever appears LAST
+/// in the document. Swift dictionaries serialize in per-process random key order, so a body
+/// containing both fields randomly lost ALL keyed attributes (incl. `merge_group`) whenever
+/// "tags" serialized after "attributes". These tests pin that the legacy field is never sent.
+final class NoLegacyTagsFieldTests: XCTestCase {
+
+    func testStartLaunchEndPoint_DoesNotSendLegacyTagsField() {
+        let endPoint = StartLaunchEndPoint(
+            launchName: "L",
+            tags: ["stg2"],
+            mode: .default,
+            attributes: [["key": "merge_group", "value": "regression-1"]],
+            uuid: "u-1"
+        )
+        XCTAssertNil(endPoint.parameters["tags"],
+                     "\"tags\" is a @JsonAlias of \"attributes\" on the server; sending both randomly clobbers attributes")
+        let attrs = endPoint.parameters["attributes"] as? [[String: String]]
+        XCTAssertEqual(attrs?.first?["key"], "merge_group",
+                       "Keyed attributes must be preserved in the body")
+    }
+
+    func testStartItemEndPoint_DoesNotSendLegacyTagsField() {
+        let endPoint = StartItemEndPoint(itemName: "Suite", launchID: "u-1", type: .suite)
+        XCTAssertNil(endPoint.parameters["tags"],
+                     "An empty \"tags\": [] can wipe item attributes via the same @JsonAlias clobber")
+    }
+}
+
 // MARK: - Launch-gate ordering (the "attribute-less orphan / N of 6" bug)
 
 /// Records the ORDER in which `RPListener` calls ReportPortal, so a test can prove the launch

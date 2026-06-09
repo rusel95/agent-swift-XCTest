@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Fixed
+- **Random loss of all launch attributes (the real "N of 6 didn't merge" cause).** The
+  start-launch and start-item bodies sent a legacy `"tags"` field alongside `"attributes"`.
+  Server-side, ReportPortal's `StartRQ` declares `@JsonAlias({"attributes","tags"})` — both
+  names bind to the SAME property and Jackson keeps whichever appears last in the JSON.
+  Swift dictionaries serialize in per-process random key order, so each test process was a
+  coin flip: when `"tags"` serialized after `"attributes"`, the keyless tag strings replaced
+  every keyed attribute (`merge_group`, `device`, `os`, …), making the launch invisible to
+  the post-run merge. The legacy `"tags"` field is no longer sent (tags already reach RP as
+  keyed `tag` attributes), by @rusel95.
 - Orphan-launch back-fill now targets the **v1** API. ReportPortal's launch read/update
   endpoints (`GET launch/uuid/{uuid}`, `PUT launch/{id}/update`) only exist under `/api/v1`,
   but the agent's client is pinned to `/api/v2` (start/finish/merge) — so the back-fill's two

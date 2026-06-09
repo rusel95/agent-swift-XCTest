@@ -29,12 +29,14 @@ struct StartItemEndPoint: EndPoint {
     }
 
     // V2 API uses camelCase parameter names (launchUuid not launch_id)
+    // No legacy "tags" field: server-side it's a @JsonAlias of "attributes" (last field in
+    // the JSON wins), so an empty "tags": [] could wipe the item's attributes whenever the
+    // random dictionary serialization order put it after "attributes".
     parameters = [
       "description": "",
       "launchUuid": launchID,  // V2 API: camelCase
       "name": itemName,
       "start_time": TimeHelper.currentTimeAsString(),
-      "tags": [],
       "type": type.rawValue,
       "attributes": attributes
     ]

@@ -211,15 +211,21 @@ final class RecordingReportingService: ReportingServiceProtocol, @unchecked Send
     private var _launchAttributes: [[String: String]] = []
 
     /// Ordered log of operations, e.g. ["startLaunch", "startSuite", ...].
-    var calls: [String] { lock.lock(); defer { lock.unlock() }; return _calls }
+    var calls: [String] { withLock { _calls } }
     /// The attributes passed to `startLaunch` (to assert `merge_group` is sent with the launch).
-    var launchAttributes: [[String: String]] { lock.lock(); defer { lock.unlock() }; return _launchAttributes }
+    var launchAttributes: [[String: String]] { withLock { _launchAttributes } }
 
-    private func record(_ op: String) { lock.lock(); _calls.append(op); lock.unlock() }
+    private func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
+
+    private func record(_ op: String) { withLock { _calls.append(op) } }
 
     func startLaunch(name: String, tags: [String], attributes: [[String: String]], uuid: String) async throws -> String {
         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms: make a missing gate-await observable
-        lock.lock(); _launchAttributes = attributes; lock.unlock()
+        withLock { _launchAttributes = attributes }
         record("startLaunch")
         return uuid
     }

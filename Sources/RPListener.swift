@@ -18,11 +18,13 @@ import XCTest
 
 open class RPListener: NSObject, XCTestObservation {
 
-    private var reportingService: (any ReportingServiceProtocol)?
+    // Plain existential (no `any`): the `any` keyword is Swift 5.6+, and the package/podspec
+    // declare Swift 5.5 as the minimum supported version.
+    private var reportingService: ReportingServiceProtocol?
 
     /// Test seam: factory for the reporting service. Production uses the real
     /// `ReportingService`; unit tests inject a recording double to assert call ordering.
-    var makeReportingService: (AgentConfiguration) -> any ReportingServiceProtocol = {
+    var makeReportingService: (AgentConfiguration) -> ReportingServiceProtocol = {
         ReportingService(configuration: $0)
     }
 
@@ -72,7 +74,7 @@ open class RPListener: NSObject, XCTestObservation {
     /// observation callbacks directly without the listener also reacting to the test run
     /// itself. Never used in production (the public `init()` is the only registered path).
     init(injectedConfiguration: AgentConfiguration,
-         makeReportingService: @escaping (AgentConfiguration) -> any ReportingServiceProtocol) {
+         makeReportingService: @escaping (AgentConfiguration) -> ReportingServiceProtocol) {
         self.injectedConfiguration = injectedConfiguration
         self.makeReportingService = makeReportingService
         super.init()

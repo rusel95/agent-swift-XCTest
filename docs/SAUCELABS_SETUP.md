@@ -31,14 +31,16 @@ The **only** configuration that survives to the device is what is **compiled int
 **The approach:** each device creates its own launch tagged with a shared, **run-unique**
 `merge_group`; after all shards finish, a post-run merge step combines exactly this run's launches.
 
-> **Orphan launches & the "3 of 6" symptom.** Occasionally ReportPortal auto-creates a *bare*
-> launch from a device's first test-item POST before that device's `startLaunch` registers the
-> attributes — so the launch ends up with **no `merge_group`** and the merge can't find it. This is
-> timing-dependent, which is why a run can merge cleanly one time and miss shards the next. The
-> agent now closes this at the source: when `startLaunch` gets a 409 (the bare launch already holds
-> its UUID), it **back-fills the full attribute set (including `merge_group`) onto that launch**, so
-> every device's launch is mergeable regardless of who won the create race. The merge script's
-> time-window orphan patching (below) remains as a secondary safety net.
+> **Launches without `merge_group` (the "3 of 6" symptom) — fixed in the agent.** Older agent
+> builds sent a legacy `"tags"` field next to `"attributes"` in the start-launch request.
+> Server-side, ReportPortal treats both names as **the same field** (`@JsonAlias`) and keeps
+> whichever appears last in the JSON — and Swift serializes dictionary keys in per-process random
+> order, so each shard was a coin flip: when `"tags"` landed last, it silently **replaced every
+> keyed attribute, including `merge_group`**, and the merge couldn't find that launch. The agent
+> no longer sends the legacy field, so every launch keeps its attributes deterministically. As
+> defense-in-depth, if `startLaunch` ever gets a 409 (a launch with its UUID already exists), the
+> agent back-fills the full attribute set onto that launch. **Use an agent build that includes
+> these fixes** — launches created by older builds can still randomly lose their attributes.
 
 ---
 
@@ -164,11 +166,24 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath ./DerivedData
 
+      # build-for-testing produces .app bundles (not .ipa), so wrap each one in the
+      # Payload/ zip layout SauceLabs expects. (If you already build IPAs via fastlane
+      # gym or xcodebuild -exportArchive, skip this and upload those instead.)
       - name: Package artifacts
         run: |
+          PRODUCTS=./DerivedData/Build/Products
+          APP=$(find "$PRODUCTS" -name "*.app" ! -name "*-Runner.app" -print -quit)
+          RUNNER=$(find "$PRODUCTS" -name "*-Runner.app" -print -quit)
+          test -n "$APP" && test -n "$RUNNER"   # fail fast if either bundle is missing
           mkdir -p ./build
-          cp $(find ./DerivedData -name "*.ipa" | head -1) ./build/Example.ipa
-          cp $(find ./DerivedData -name "*-Runner.ipa" | head -1) ./build/ExampleUITests-Runner.ipa
+          package_ipa() {  # $1 = .app path, $2 = output .ipa
+            rm -rf Payload && mkdir Payload
+            cp -R "$1" Payload/
+            zip -qry "$2" Payload
+            rm -rf Payload
+          }
+          package_ipa "$APP"    ./build/Example.ipa
+          package_ipa "$RUNNER" ./build/ExampleUITests-Runner.ipa
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -425,92 +440,12 @@ discover_launches() {
   done
 }
 
-# --- Step 1c: Orphan patching — rescue launches that lost their merge_group ---
-# On real SauceLabs devices, a race condition in the agent can cause 1–2 shards to have
-# their launch auto-created by ReportPortal (from the first test-item POST) BEFORE the
-# startLaunch call completes. These launches exist with the correct name and timeframe
-# but have NO attributes (no merge_group, no device info). This function finds them by:
-#   1. Querying launches with the same launch name in the same time window
-#   2. Filtering out those that already have merge_group (the good ones)
-#   3. PATCHing the orphans with merge_group so the merge script picks them up
-#
-# Called only when discover_launches found fewer than RP_EXPECTED_LAUNCHES.
-patch_orphan_launches() {
-  local good_ids_json="$1"
-  local launch_name="${RP_MERGED_LAUNCH_NAME%% (merged)}"  # Strip " (merged)" suffix
-  # Use the base launch name from RP_MERGE_GROUP pattern if possible
-  # e.g., "Appvengers RegressioniOS" — but we don't know it statically.
-  # Instead, get the name from one of the found launches.
-  
-  if [[ $(echo "$good_ids_json" | jq 'length') -eq 0 ]]; then
-    log WARN "No good launches to derive name from; cannot patch orphans"
-    return 1
-  fi
-  
-  # Get the name of the first good launch
-  local first_good_id
-  first_good_id=$(echo "$good_ids_json" | jq -r '.[0]')
-  local name_resp
-  name_resp=$(rp_curl_retry -X GET "$(api_v1)/launch?filter.eq.id=${first_good_id}&page.size=1") || return 1
-  local known_name
-  known_name=$(echo "$name_resp" | jq -r '.content[0].name // empty')
-  
-  if [[ -z "$known_name" ]]; then
-    log WARN "Could not determine launch name from existing launches"
-    return 1
-  fi
-  
-  log INFO "Looking for orphan launches with name='${known_name}' missing merge_group..."
-  
-  # Find all launches with the same name in the last 2 hours (generous window)
-  local all_resp
-  all_resp=$(rp_curl_retry -G "$(api_v1)/launch" \
-    --data-urlencode "filter.eq.name=${known_name}" \
-    --data-urlencode "page.size=50" \
-    --data-urlencode "page.sort=startTime,desc") || return 1
-  
-  local all_ids
-  all_ids=$(echo "$all_resp" | jq -c '[(.content // [])[].id]')
-  
-  # Filter: find IDs that are NOT in good_ids_json AND have no merge_group attribute
-  local orphans
-  orphans=$(echo "$all_resp" | jq -c --argjson good "$good_ids_json" \
-    '[(.content // []) | .[] | select(
-      (.id as $id | $good | index($id) | not) and
-      ((.attributes // []) | all(.key != "merge_group"))
-    ) | .id]')
-  
-  local orphan_count
-  orphan_count=$(echo "$orphans" | jq 'length')
-  
-  if (( orphan_count == 0 )); then
-    log INFO "No orphan launches found"
-    return 1
-  fi
-  
-  log INFO "Found ${orphan_count} orphan launch(es) — patching merge_group attribute..."
-  
-  local patched=0
-  for orphan_id in $(echo "$orphans" | jq -r '.[]'); do
-    local patch_body
-    patch_body=$(jq -n --arg mg "$RP_MERGE_GROUP" '{
-      attributes: [{"key": "merge_group", "value": $mg}]
-    }')
-    
-    if rp_curl_retry -X PUT "$(api_v1)/launch/${orphan_id}/update" -d "$patch_body" >/dev/null 2>&1; then
-      log INFO "  Patched orphan launch ID=${orphan_id} with merge_group=${RP_MERGE_GROUP}"
-      patched=$((patched + 1))
-    else
-      log WARN "  Failed to patch orphan launch ID=${orphan_id}"
-    fi
-  done
-  
-  if (( patched > 0 )); then
-    log INFO "Patched ${patched} orphan(s); re-discovering launches..."
-    return 0
-  fi
-  return 1
-}
+# NOTE: earlier revisions had a "Step 1c: orphan patching" fallback here that adopted
+# same-named launches missing merge_group. It was removed: the query had no time bound, so
+# with launch history containing attribute-less launches (produced by agent builds that
+# still had the legacy-"tags" bug) it could stamp the CURRENT run's merge_group onto stale
+# launches and merge old results into the run. The agent now fixes attribute loss at the
+# source, so a missing shard means the shard genuinely failed — check SauceLabs instead.
 
 wait_for_launches() {
   local ids_json="$1"
@@ -569,20 +504,6 @@ main() {
   ids=$(echo "$response" | jq -c '[(.content // [])[].id]')
   uuids=$(echo "$response" | jq -r '[(.content // [])[].uuid] | .[]')
   count=$(echo "$ids" | jq 'length')
-
-  # --- Orphan patching: if we found fewer than expected, look for attribute-less launches ---
-  if [[ -n "${RP_EXPECTED_LAUNCHES:-}" ]] && (( count > 0 )) && (( count < RP_EXPECTED_LAUNCHES )); then
-    log WARN "Found ${count}/${RP_EXPECTED_LAUNCHES} — attempting orphan rescue..."
-    if patch_orphan_launches "$ids"; then
-      # Re-discover after patching
-      sleep 2  # Brief pause for RP to index the new attribute
-      response=$(find_launches) || { log ERROR "Failed to re-query launches after orphan patch"; exit 1; }
-      ids=$(echo "$response" | jq -c '[(.content // [])[].id]')
-      uuids=$(echo "$response" | jq -r '[(.content // [])[].uuid] | .[]')
-      count=$(echo "$ids" | jq 'length')
-      log INFO "After orphan patching: found ${count} launch(es)"
-    fi
-  fi
 
   if (( count == 0 )); then
     # "Nothing to merge" is not a failure: the merge step usually runs with `if: always()`,

@@ -171,34 +171,50 @@ Spaces are replaced with underscores for compatibility.
 
 ## Parallel Test Execution (v4.0+)
 
-Run tests across multiple simulators simultaneously to cut pipeline time, while preserving the test hierarchy in ReportPortal.
+Run tests across multiple simulator clones simultaneously to cut pipeline time, while preserving the test hierarchy in ReportPortal.
+
+### Distribution vs. duplication
+
+Two modes both use the word "parallel" but behave very differently:
+
+| Mode | Command | What happens |
+|------|---------|--------------|
+| **Distribution** (recommended) | Single `-destination` + `-maximum-parallel-testing-workers N` | Xcode clones the simulator and **distributes** test classes across clones — each test runs exactly once |
+| **Device matrix** | Multiple `-destination` flags | Each device runs the **full** suite independently — tests are **duplicated** (3 devices × 156 tests = 468 results) |
+
+Use distribution to go faster. Use device matrix to verify behaviour across specific device types.
+
+### One shared launch (distribution)
+
+The test plan expands `$(RP_LAUNCH_UUID)` as an **Xcode build setting**, not a shell environment variable. Shell `export` does not reach the test processes. Pass the UUID as a trailing `xcodebuild` build-setting argument:
 
 ```bash
-# Option A — clone one device type N times
+# ✅ Works — UUID passed as a build setting
+UUID=$(uuidgen)
 xcodebuild test -scheme YourScheme -testPlan YourPlan \
-  -destination 'platform=iOS Simulator,name=iPhone 16' \
-  -parallel-testing-enabled YES -maximum-parallel-testing-workers 4
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -parallel-testing-enabled YES \
+  -maximum-parallel-testing-workers 4 \
+  RP_LAUNCH_UUID="$UUID"
 
-# Option B — explicit device matrix
-xcodebuild test -scheme YourScheme -testPlan YourPlan \
-  -destination 'platform=iOS Simulator,name=iPhone 16' \
-  -destination 'platform=iOS Simulator,name=iPhone 15 Pro' \
-  -parallel-testing-enabled YES
-```
-
-### One shared launch in CI
-
-By default each worker creates its **own** launch. To report all workers into a **single** launch, export a shared UUID **before** the test run:
-
-```bash
+# ❌ Does NOT work — shell export is not an Xcode build setting
 export RP_LAUNCH_UUID=$(uuidgen)
-xcodebuild test -scheme YourScheme -testPlan YourPlan \
-  -parallel-testing-enabled YES -maximum-parallel-testing-workers 4
+xcodebuild test …
 ```
 
-The first worker creates the launch; the others join it (HTTP 409 is handled as success).
+The first clone to call `POST /launch` creates the launch; the other clones receive HTTP 409 and treat it as a successful join. All clones report into the single launch.
 
-> ⚠️ **Don't generate the UUID in a build-phase script.** Build phases only run when sources change, so a re-run without code changes reuses a stale UUID and joins the previous run's (already-finished) launch. Always set `RP_LAUNCH_UUID` from the shell/CI before `xcodebuild`.
+> ⚠️ **Don't generate the UUID in a build-phase script.** Build phases only run when sources change, so a re-run without code changes reuses a stale UUID and joins the previous run's (already-finished) launch.
+
+### Xcode IDE (⌘U)
+
+When you press ⌘U, `$(RP_LAUNCH_UUID)` resolves to an empty string (no build setting is provided), the agent sees an empty env var, and each parallel worker process generates its own UUID — producing N separate launches. This is **by design** for local development.
+
+To get a single launch from ⌘U, set a concrete UUID directly in the test plan's environment variables (open the `.xctestplan` file → Configurations → Environment Variables → change `$(RP_LAUNCH_UUID)` to a fixed UUID string). Change it before each run to avoid joining the previous run's already-finished launch.
+
+For local runs that produce separate launches you can also merge them by hand in **ReportPortal → Launches → Merge**.
+
+![Merge example](./example_merge.png)
 
 ### Worker-count guidance
 
@@ -207,11 +223,7 @@ The first worker creates the launch; the others join it (HTTP 409 is handled as 
 | Local (8+ cores) | 4 |
 | Local (4–6 cores) | 2–3 |
 | GitHub Actions | 2 |
-| Self-hosted (cores N) | N / 2 |
-
-For local Xcode runs that produce separate launches, you can also merge them by hand in **ReportPortal → Launches → Merge**.
-
-![Merge example](./example_merge.png)
+| Self-hosted (N cores) | N / 2 |
 
 ## SauceLabs Real-Device Merge
 

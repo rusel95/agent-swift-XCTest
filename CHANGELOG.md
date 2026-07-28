@@ -2,6 +2,59 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Random loss of all launch attributes (the real "N of 6 didn't merge" cause).** The
+  start-launch and start-item bodies sent a legacy `"tags"` field alongside `"attributes"`.
+  Server-side, ReportPortal's `StartRQ` declares `@JsonAlias({"attributes","tags"})` — both
+  names bind to the SAME property and Jackson keeps whichever appears last in the JSON.
+  Swift dictionaries serialize in per-process random key order, so each test process was a
+  coin flip: when `"tags"` serialized after `"attributes"`, the keyless tag strings replaced
+  every keyed attribute (`merge_group`, `device`, `os`, …), making the launch invisible to
+  the post-run merge. The legacy `"tags"` field is no longer sent (tags already reach RP as
+  keyed `tag` attributes), by @rusel95.
+- Orphan-launch back-fill now targets the **v1** API. ReportPortal's launch read/update
+  endpoints (`GET launch/uuid/{uuid}`, `PUT launch/{id}/update`) only exist under `/api/v1`,
+  but the agent's client is pinned to `/api/v2` (start/finish/merge) — so the back-fill's two
+  calls were hitting v2 and failing (no-op). They now use a dedicated v1 client, so attributes
+  are actually applied to an orphan launch, by @rusel95.
+
+## [4.1.0] - 2026-06-09
+
+### Fixed
+- Launch gate eliminates the actor priority inversion that caused some parallel
+  shards to lose all attributes ("merged 4 of 6"). Suites/tests now await a single
+  launch-creation Task and skip reporting when launch creation ultimately fails,
+  by @rusel95.
+- Launch finalization treats only HTTP 409 (already finished) as non-fatal; every
+  other HTTP status and non-HTTP error now propagates, by @rusel95.
+- Orphan-launch attribute back-fill: when `startLaunch` returns 409 (a launch with the
+  same UUID already exists — e.g. an "orphan" ReportPortal auto-created from the first
+  test-item POST on a real-device farm), the agent now resolves that launch's numeric id
+  and PUTs the full attribute set onto it, so `merge_group` is present and the post-run
+  merge can find it. Previously such launches stayed attribute-less and were skipped by
+  the merge ("3 of 6"), by @rusel95.
+
+### Added
+- SauceLabs real-device merge support: `RP_MERGE_GROUP` / `ReportPortalMergeGroup`
+  (`merge_group` attribute), `RP_SKIP_FINISH` / `ReportPortalSkipFinish` (defer
+  finalization to a post-run merge script), and `RP_CI_RUN_ID` / `GITHUB_RUN_ID`
+  (`ci_run_id` attribute to disambiguate concurrent CI runs), by @rusel95.
+- Launch creation retries up to 3 times with exponential backoff on transient
+  errors, by @rusel95.
+- `docs/SAUCELABS_SETUP.md` — self-contained guide for the SauceLabs real-device
+  merge: setup steps, the vendorable merge script, a GitHub Actions workflow, and a
+  copy-paste prompt for wiring it into a consuming repo with an AI agent, by @rusel95.
+
+### Changed
+- `LaunchManager` actor replaced by a caseless `LaunchUUID` enum that resolves the
+  per-process launch UUID once (`RP_LAUNCH_UUID` env var or auto-generated), by @rusel95.
+- CocoaPod deployment targets lowered to the library's actual floor — iOS 15 /
+  macOS 12 / tvOS 15 — to match `Package.swift`. The podspec previously
+  over-declared iOS 18.6 / macOS 14.0 / tvOS 18.2, by @rusel95.
+
+### Removed
+- Unused `GetCurrentLaunchEndPoint` (dead after the V2 API migration), by @rusel95.
+
 ## [4.0.1] - 2025-12-12
 
 ## [4.0.0] - 2025-11-21

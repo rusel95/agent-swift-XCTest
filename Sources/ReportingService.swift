@@ -17,13 +17,30 @@
 import Foundation
 @preconcurrency import XCTest
 
+extension HTTPClientError {
+    /// A 409 Conflict from the finish-launch endpoint means the launch was already
+    /// finished (idempotent). It is the ONLY non-fatal finalize error; every other HTTP
+    /// status and every non-HTTP error (network, decoding) is fatal and must propagate.
+    var isLaunchAlreadyFinished: Bool {
+        if case .httpError(let statusCode, _) = self, statusCode == 409 {
+            return true
+        }
+        return false
+    }
+}
+
 /// Async/await API for ReportPortal communication (stateless)
-/// Uses LaunchManager and OperationTracker for state management
+/// Uses OperationTracker for state management
 public final class ReportingService: Sendable {
 
     // MARK: - Properties
 
     private let httpClient: HTTPClient
+    /// Separate client pinned to the **v1** API. ReportPortal's launch *read* and *update*
+    /// endpoints (`GET launch/uuid/{uuid}`, `PUT launch/{id}/update`) only exist under
+    /// `/api/v1`, while `httpClient` is pinned to `/api/v2` (start/finish/merge). Used by
+    /// `patchLaunchAttributes` to back-fill attributes onto an orphan launch.
+    private let httpClientV1: HTTPClient
     private let configuration: AgentConfiguration
     private let operationTracker: OperationTracker
 
@@ -43,12 +60,20 @@ public final class ReportingService: Sendable {
             .appendingPathComponent("api")
             .appendingPathComponent("v2")
             .appendingPathComponent(configuration.projectName)
+        // V1 base — for launch read/update (those endpoints don't exist under v2).
+        let baseURLV1 = configuration.reportPortalURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("v1")
+            .appendingPathComponent(configuration.projectName)
 
         if let client = httpClient {
+            // Injected (tests): reuse the same client for both — unit tests don't hit v1 live.
             self.httpClient = client
+            self.httpClientV1 = client
         } else {
             let authPlugin = AuthorizationPlugin(token: configuration.portalToken)
             self.httpClient = HTTPClient(baseURL: baseURL, plugins: [authPlugin])
+            self.httpClientV1 = HTTPClient(baseURL: baseURLV1, plugins: [authPlugin])
         }
     }
 
@@ -83,14 +108,41 @@ public final class ReportingService: Sendable {
 
     /// Finish launch in ReportPortal
     /// - Parameters:
-    ///   - launchID: Launch ID from LaunchManager
+    ///   - launchID: Launch ID from LaunchUUID.value
     ///   - status: Status to send (ReportPortal will calculate actual status from tests)
     func finalizeLaunch(launchID: String, status: TestStatus) async throws {
-        let endPoint = FinishLaunchEndPoint(launchID: launchID, status: status)
+        do {
+            let endPoint = FinishLaunchEndPoint(launchID: launchID, status: status)
+            let _: LaunchFinish = try await httpClient.callEndPoint(endPoint)
+            Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
+        } catch let error as HTTPClientError {
+            if error.isLaunchAlreadyFinished {
+                Logger.shared.warning("⚠️ Launch finalization returned 409 — launch already finished (idempotent, non-fatal)")
+                return
+            }
+            throw error
+        }
+    }
 
-        let _: LaunchFinish = try await httpClient.callEndPoint(endPoint)
-
-        Logger.shared.info("Launch finalized: \(launchID) with status: \(status.rawValue)")
+    /// Back-fill attributes onto an existing launch.
+    ///
+    /// On real-device farms (SauceLabs), ReportPortal can auto-create a bare "orphan"
+    /// launch from the first test-item POST that references a launch UUID it hasn't seen
+    /// yet — a race the launch gate narrows but can't fully close across the network.
+    /// That orphan has none of our attributes (no `merge_group`), so the post-run merge
+    /// script — which finds launches by `merge_group` — can't see it. When `startLaunch`
+    /// then returns 409 (the orphan already holds our UUID), we resolve the orphan's
+    /// numeric id from its UUID and PUT the full attribute set onto it, making it
+    /// mergeable like a normally-created launch.
+    /// - Parameters:
+    ///   - uuid: The launch UUID (same one `startLaunch` used).
+    ///   - attributes: The full attribute set to apply (metadata + `merge_group` + `ci_run_id`).
+    func patchLaunchAttributes(uuid: String, attributes: [[String: String]]) async throws {
+        let launch: Launch = try await httpClientV1.callEndPoint(GetLaunchByUuidEndPoint(uuid: uuid))
+        let _: LaunchUpdateResponse = try await httpClientV1.callEndPoint(
+            UpdateLaunchEndPoint(launchID: launch.id, attributes: attributes)
+        )
+        Logger.shared.info("📎 Back-filled \(attributes.count) attribute(s) onto existing launch \(uuid) (id: \(launch.id))")
     }
 
     // MARK: - Suite Management
@@ -130,7 +182,7 @@ public final class ReportingService: Sendable {
     /// Finish suite item in ReportPortal
     /// - Parameter operation: SuiteOperation with suite ID and final status
     func finishSuite(operation: SuiteOperation) async throws {
-        let launchID = LaunchManager.shared.launchID
+        let launchID = LaunchUUID.value
 
         // Use suite status if available, otherwise default to passed
         let status = operation.status ?? .passed
@@ -174,7 +226,7 @@ public final class ReportingService: Sendable {
             preconditionFailure("Test status should not be nil when finishing test")
         }
         
-        let launchID = LaunchManager.shared.launchID
+        let launchID = LaunchUUID.value
 
         let endPoint = try FinishItemEndPoint(
             itemID: operation.testID,
@@ -334,3 +386,61 @@ public final class ReportingService: Sendable {
         Logger.shared.info("Uploaded \(fileAttachments.count) attachments to item: \(itemID)", correlationID: correlationID)
     }
 }
+
+// MARK: - Orphan-launch attribute back-fill (SauceLabs)
+//
+// These two endpoints support `patchLaunchAttributes(uuid:attributes:)`. They live here
+// (rather than in Sources/EndPoints/) so both SPM and the Xcode project compile them
+// without a project-file change.
+
+/// `GET launch/uuid/{uuid}` — resolve a launch's numeric `id` from its UUID.
+/// (ReportPortal's update endpoint is keyed by the numeric id, not the UUID.)
+struct GetLaunchByUuidEndPoint: EndPoint {
+    let method: HTTPMethod = .get
+    let relativePath: String
+
+    init(uuid: String) {
+        relativePath = "launch/uuid/\(uuid)"
+    }
+}
+
+/// `PUT launch/{id}/update` — replace a launch's attributes (used to back-fill
+/// `merge_group` and metadata onto an orphan launch so the post-run merge can find it).
+struct UpdateLaunchEndPoint: EndPoint {
+    let method: HTTPMethod = .put
+    let relativePath: String
+    let parameters: [String: Any]
+
+    init(launchID: Int, attributes: [[String: String]]) {
+        relativePath = "launch/\(launchID)/update"
+        parameters = ["attributes": attributes]
+    }
+}
+
+/// Lenient response for `PUT launch/{id}/update` (ReportPortal returns `{ "message": ... }`).
+/// All-optional so a differently-shaped success body still decodes.
+struct LaunchUpdateResponse: Decodable {
+    let message: String?
+}
+
+// MARK: - ReportingServiceProtocol (ordering test seam)
+//
+// `RPListener` depends on this protocol rather than the concrete `ReportingService`, so unit
+// tests can inject a recording double and assert the ORDER of ReportPortal calls — in
+// particular that the launch is created BEFORE any suite/test item is sent (the "attribute-less
+// orphan" bug). This is a pure abstraction: `ReportingService` already implements every method,
+// so production behavior is unchanged. Kept here (not a new file) so the Xcode project compiles
+// it without a project-file change.
+protocol ReportingServiceProtocol: Sendable {
+    func startLaunch(name: String, tags: [String], attributes: [[String: String]], uuid: String) async throws -> String
+    func patchLaunchAttributes(uuid: String, attributes: [[String: String]]) async throws
+    func startSuite(operation: SuiteOperation, launchID: String) async throws -> String
+    func finishSuite(operation: SuiteOperation) async throws
+    func startTest(operation: TestOperation, launchID: String) async throws -> String
+    func finishTest(operation: TestOperation) async throws
+    func postLog(message: String, level: String, itemID: String, launchID: String, correlationID: UUID?) async throws
+    func postScreenshot(screenshotData: Data, filename: String, itemID: String, launchID: String, correlationID: UUID?) async throws
+    func finalizeLaunch(launchID: String, status: TestStatus) async throws
+}
+
+extension ReportingService: ReportingServiceProtocol {}

@@ -67,7 +67,7 @@ open class RPListener: NSObject, XCTestObservation {
     /// still-running test with the suite's status. Different tests still report concurrently.
     private var suiteStarts: [String: Task<Void, Never>] = [:]
     private var testChains: [String: Task<Void, Never>] = [:]
-    private var suiteFinishes: [Task<Void, Never>] = []
+    private var suiteFinishes: [String: Task<Void, Never>] = [:]
 
     /// `ReportPortalCollapseRetries`: mark tests as retries so ReportPortal nests earlier
     /// attempts of a test under its last one.
@@ -79,14 +79,24 @@ open class RPListener: NSObject, XCTestObservation {
     /// Upper bound on how long the end of the bundle waits for reporting still in flight.
     static let finalizationTimeout: TimeInterval = 120
 
+    /// A class that runs again in the same process (test iterations) starts its suite only
+    /// after the previous run's suite finished.
     private func enqueueSuiteStart(_ className: String, _ work: @escaping () async -> Void) {
-        suiteStarts[className] = Task { await work() }
+        let previousFinish = suiteFinishes[className]
+        suiteStarts[className] = Task {
+            await previousFinish?.value
+            await work()
+        }
     }
 
-    /// `identifier` is `Class.method`; the test's first request waits for its suite's start.
+    /// `identifier` is `Class.method`. Each request waits for the test's previous request and for
+    /// the latest start of its suite: when a whole class runs again in the same process (test
+    /// iterations), the repeated test must go under the new suite, not race it.
     private func enqueue(test identifier: String, in className: String, _ work: @escaping () async -> Void) {
-        let previous = testChains[identifier] ?? suiteStarts[className]
+        let previous = testChains[identifier]
+        let suiteStart = suiteStarts[className]
         testChains[identifier] = Task {
+            await suiteStart?.value
             await previous?.value
             await work()
         }
@@ -95,12 +105,12 @@ open class RPListener: NSObject, XCTestObservation {
     private func enqueueSuiteFinish(_ className: String, _ work: @escaping () async -> Void) {
         let before = testChains.filter { $0.key.hasPrefix(className + ".") }.map { $0.value }
             + [suiteStarts[className]].compactMap { $0 }
-        suiteFinishes.append(Task {
+        suiteFinishes[className] = Task {
             for task in before {
                 await task.value
             }
             await work()
-        })
+        }
     }
 
     public override init() {
@@ -258,12 +268,10 @@ open class RPListener: NSObject, XCTestObservation {
                     }
                     return true
                 } catch {
-                    // 409 = a launch with this UUID already exists. Two cases:
-                    //   1. CI/CD with a shared RP_LAUNCH_UUID — another worker created it (expected).
-                    //   2. Real-device farms (SauceLabs) — RP auto-created a bare "orphan" launch
-                    //      from the first test-item POST before startLaunch ran, so it has none of
-                    //      our attributes (no merge_group) and the post-run merge can't find it.
-                    // Back-fill the attributes onto the existing launch so it merges in both cases.
+                    // 409 = a launch with this UUID already exists. ReportPortal's asynchronous v2
+                    // API never answers that way (a duplicate start gets 201 and is dropped
+                    // server-side); a server that does — e.g. one with an "orphan" launch created
+                    // from an early test-item POST — gets our attributes back-filled onto it.
                     if let httpError = error as? HTTPClientError,
                        case .httpError(let code, _) = httpError, code == 409 {
                         Logger.shared.info("✅ Launch already exists (409) — back-filling attributes onto it")
@@ -381,7 +389,8 @@ open class RPListener: NSObject, XCTestObservation {
         // Retries of this class run in other processes: they must all report into one suite,
         // so it gets the same id everywhere instead of a fresh one per process.
         let sharesSuite = collapseRetries && LaunchUUID.source != .generated
-        let ranWholeClass = (testSuite.tests.first as? XCTestCase)
+        // Only a shared suite needs this, and building the class's full suite instantiates its tests.
+        let ranWholeClass = !sharesSuite || (testSuite.tests.first as? XCTestCase)
             .map { testSuite.testCaseCount >= type(of: $0).defaultTestSuite.testCaseCount } ?? true
 
         enqueueSuiteStart(testSuite.name) {
@@ -828,7 +837,7 @@ open class RPListener: NSObject, XCTestObservation {
         
         Logger.shared.info("📦 Bundle finished - waiting for pending reporting, then finalizing launch")
 
-        let pending = Array(suiteStarts.values) + Array(testChains.values) + suiteFinishes
+        let pending = Array(suiteStarts.values) + Array(testChains.values) + Array(suiteFinishes.values)
         let gate = launchGate
         let skipFinish = RPListener.resolveSkipFinish(from: testBundle)
         let done = DispatchSemaphore(value: 0)

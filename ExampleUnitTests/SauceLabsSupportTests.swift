@@ -231,7 +231,11 @@ final class RecordingReportingService: ReportingServiceProtocol, @unchecked Send
     }
     func patchLaunchAttributes(uuid: String, attributes: [[String: String]]) async throws { record("patchLaunchAttributes") }
     func launchStartTime(uuid: String) async throws -> Date? { record("launchStartTime"); return nil }
-    func startSuite(operation: SuiteOperation, launchID: String) async throws -> String { record("startSuite"); return UUID().uuidString }
+    func startSuite(operation: SuiteOperation, launchID: String) async throws -> String {
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms: slower than startTest, so a test racing its suite shows
+        record("startSuite")
+        return UUID().uuidString
+    }
     func finishSuite(operation: SuiteOperation) async throws { record("finishSuite") }
     func itemStatus(uuid: String) async throws -> String? { record("itemStatus"); return nil }
     func startTest(operation: TestOperation, launchID: String) async throws -> String {
@@ -599,5 +603,30 @@ extension ReportingOrderTests {
         XCTAssertEqual(Array(calls.prefix(2)), ["startLaunch", "startSuite"], "\(calls)")
         // Each start sleeps 50 ms; the two tests overlap instead of queueing behind each other.
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+}
+
+extension ReportingOrderTests {
+
+    func testARepeatedClassRunReportsItsTestsUnderTheNewSuite() {
+        let recorder = RecordingReportingService()
+        let listener = makeListener(recorder)
+        let test = OrderingSample(selector: #selector(OrderingSample.sample))
+        let suite = XCTestSuite(name: "OrderingSample")
+        suite.addTest(test)
+
+        listener.testBundleWillStart(Bundle(for: ReportingOrderTests.self))
+        for _ in 1...2 { // `-test-iterations 2`: the whole class runs twice in one process
+            listener.testSuiteWillStart(suite)
+            listener.testCaseWillStart(test)
+            listener.testCaseDidFinish(test)
+            listener.testSuiteDidFinish(suite)
+        }
+        listener.testBundleDidFinish(Bundle(for: ReportingOrderTests.self))
+
+        XCTAssertEqual(recorder.calls, ["startLaunch",
+                                        "startSuite", "startTest", "finishTest", "finishSuite",
+                                        "startSuite", "startTest", "finishTest", "finishSuite",
+                                        "finalizeLaunch"])
     }
 }

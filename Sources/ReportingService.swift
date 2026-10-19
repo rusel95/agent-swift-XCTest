@@ -88,8 +88,8 @@ public final class ReportingService: Sendable {
     /// - Returns: Launch ID (UUID string from ReportPortal)
     ///
     /// ## V2 API Behavior:
-    /// - **Idempotent**: Multiple calls with same UUID return same launch
-    /// - **409 Conflict**: Expected when launch already exists (caller should handle gracefully)
+    /// - **Idempotent**: Multiple calls with same UUID report into the same launch. Reporting is
+    ///   asynchronous: a duplicate start gets a success response and is dropped server-side.
     /// - **Parallel-safe**: All workers can call simultaneously with same UUID
     func startLaunch(name: String, tags: [String], attributes: [[String: String]], uuid: String) async throws -> String {
         let endPoint = StartLaunchEndPoint(

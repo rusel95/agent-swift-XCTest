@@ -40,6 +40,9 @@
   status, so ReportPortal derives it from the tests, by @rusel95.
 - **Skipped tests were reported as passed.** XCTest marks a skipped test as succeeded; the
   agent now checks the skip first and reports `SKIPPED`, by @rusel95.
+  - Behaviour change: ReportPortal derives a suite or launch as `FAILED` when any of its tests is
+    not `PASSED` (or `INFO`/`WARN`), so a launch with skipped tests is now red, as with other
+    ReportPortal agents. The skip itself is not marked as a defect to investigate.
 - **Requests could reach ReportPortal out of order.** Every XCTest callback started its own
   task, so a suite could be finished before its last test (ReportPortal then force-finishes
   that test with the suite's status) and a test could be finished before its start returned

@@ -333,7 +333,7 @@ RPListener ──► LaunchUUID           (launch identity: shared RP_LAUNCH_UUI
 - **`LaunchUUID`** — resolves launch UUID once per process (`RP_LAUNCH_UUID` env var, `ReportPortalLaunchUUID` in `Info.plist`, or auto-generated).
 - **`ReportingService`** — stateless async/await wrapper over the ReportPortal v2 API.
 - **Ordering** — a suite starts before its tests, each test's requests go out in order (start → logs → finish), and a suite finishes only after all of its tests, so it is never closed under a running test. Different tests still report concurrently. At the end of the bundle the agent waits for exactly the requests still in flight (up to 120 s) before the process exits.
-- **Statuses** — tests send their own status; suites and the launch send none, so ReportPortal derives them from the tests.
+- **Statuses** — tests send their own status (a skipped test is `SKIPPED`); suites and the launch send none, so ReportPortal derives them from the tests. ReportPortal derives `FAILED` when any test is not `PASSED`, which includes a skipped one.
 - **Idempotency** — finalizing an already-finished launch (HTTP 409) is treated as success.
 
 ## Contributing

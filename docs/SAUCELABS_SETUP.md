@@ -51,7 +51,7 @@ The **only** configuration that survives to the device is what is **compiled int
 | How | `ReportPortalLaunchUUID` in the test bundle's `Info.plist`; every shard reports into one launch | `merge_group` attribute + a ~290-line script that queries and merges launches afterwards |
 | Farm retries | Re-run the same bundle ⇒ same launch; with `ReportPortalCollapseRetries` each retried test is one row, earlier attempts nested | Each retry is another launch to merge, every attempt a separate row |
 | CI needs | One `PUT /launch/{uuid}/finish` at the end of the job | `jq`, `curl`, the vendored merge script, discovery/settle polling |
-| Use it when | The agent is ≥ 4.1 (has `ReportPortalLaunchUUID`) | Pinned to an older agent |
+| Use it when | The agent is newer than 4.1.0 (has `ReportPortalLaunchUUID`) | Pinned to 4.1.0 or older |
 
 **Shared launch — the whole recipe:**
 

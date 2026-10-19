@@ -35,12 +35,6 @@ open class RPListener: NSObject, XCTestObservation {
     // Shared actor for parallel execution
     private let operationTracker = OperationTracker.shared
 
-    // Root suite ID stored directly (no coordination needed for single bundle)
-    private var rootSuiteID: String?
-    
-    // Task for root suite creation (to synchronize child suites)
-    private var rootSuiteCreationTask: Task<String, Error>?
-    
     // Flag to ensure launch is created only once
     private var isLaunchCreated = false
     
@@ -334,40 +328,19 @@ open class RPListener: NSObject, XCTestObservation {
         return baseLaunchName
     }
     
-    /// Wait for root suite ID to become available
-    /// Awaits the root suite creation task to avoid race conditions
-    /// - Returns: Root suite ID if available
-    /// - Throws: Error if root suite creation fails or hasn't been initiated
-    private func waitForRootSuiteID() async throws -> String {
-        // Fast path: root suite already created
-        if let id = rootSuiteID {
-            return id
-        }
-        
-        // If no task exists, root suite hasn't been initiated yet
-        guard let task = rootSuiteCreationTask else {
-            throw NSError(
-                domain: "RPListener",
-                code: 1001,
-                userInfo: [NSLocalizedDescriptionKey: "Root suite creation has not been initiated yet"]
-            )
-        }
-        
-        // Wait for task to complete (no timeout needed - suite creation is fast)
-        return try await task.value
-    }
-    
     public func testSuiteWillStart(_ testSuite: XCTestSuite) {
         Logger.shared.info("📋 testSuiteWillStart called: '\(testSuite.name)'")
-        
+
         guard let asyncService = reportingService else {
             Logger.shared.warning("⚠️ Reporting disabled: Test suite '\(testSuite.name)' will not be reported to ReportPortal")
             return
         }
-        
+
+        // Flat hierarchy: Launch → test class suites → tests. The `.xctest` bundle suite is not reported.
         guard
             !testSuite.name.contains("All tests"),
-            !testSuite.name.contains("Selected tests") else
+            !testSuite.name.contains("Selected tests"),
+            !testSuite.name.contains(".xctest") else
         {
             Logger.shared.info("⏭️ Skipping meta-suite: '\(testSuite.name)'")
             return
@@ -406,45 +379,22 @@ open class RPListener: NSObject, XCTestObservation {
             
             do {
                 let correlationID = UUID()
-                let isRootSuite = testSuite.name.contains(".xctest")
 
-                // Build consistent identifier: use suite name as-is
                 // For test class suites, XCTest provides the class name
-                // For root suites, it's the bundle name with .xctest extension
                 let identifier = testSuite.name
 
                 // DIAGNOSTIC: Log suite details to understand naming
                 Logger.shared.info("""
                     📦 SUITE STARTING:
-                    - testSuite.name: '\(testSuite.name)'
                     - identifier: '\(identifier)'
-                    - isRoot: \(isRootSuite)
                     - testCount: \(testSuite.testCaseCount)
                     """, correlationID: correlationID)
-
-                // SIMPLIFIED HIERARCHY: All test class suites at root level
-                // Root .xctest bundle suite is often skipped by test plans/CLI execution
-                // Creating flat structure: Launch → Test Class Suites → Tests
-                let parentSuiteID: String? = nil
-
-                if isRootSuite {
-                    Logger.shared.info("📦 ROOT BUNDLE SUITE DETECTED: \(testSuite.name) (will be skipped - using flat hierarchy)", correlationID: correlationID)
-                    // Don't create the root bundle suite - it's redundant
-                    return
-                } else {
-                    Logger.shared.info("📦 Creating TEST CLASS SUITE at root level", correlationID: correlationID)
-                }
 
                 // Create suite operation
                 var operation = SuiteOperation(
                     correlationID: correlationID,
                     suiteID: "", // Will be set after API call
-                    rootSuiteID: parentSuiteID,
-                    suiteName: testSuite.name,
-                    status: nil,
-                    startTime: Date(),
-                    childTestIDs: [],
-                    metadata: [:]
+                    suiteName: testSuite.name
                 )
                 operation.codeRef = codeRef
                 operation.ranWholeClass = ranWholeClass
@@ -457,35 +407,13 @@ open class RPListener: NSObject, XCTestObservation {
 
                 Logger.shared.info("✅ Suite registered: '\(identifier)' → ID: pending", correlationID: correlationID)
 
-                // Create task for suite creation
-                let suiteCreationTask = Task<String, Error> {
-                    // Start suite in ReportPortal
-                    let apiStartTime = Date()
-                    Logger.shared.info("📡 Calling ReportPortal API to create suite...", correlationID: correlationID)
-                    let suiteID = try await asyncService.startSuite(operation: operation, launchID: launchID)
-                    let apiDuration = Date().timeIntervalSince(apiStartTime)
-                    Logger.shared.info("📡 API call completed in \(Int(apiDuration * 1000))ms", correlationID: correlationID)
-                    return suiteID
-                }
-                
-                // Store task for root suite (so child suites can await it)
-                if isRootSuite {
-                    self.rootSuiteCreationTask = suiteCreationTask
-                    Logger.shared.info("📌 Root suite creation task stored", correlationID: correlationID)
-                }
-                
-                // Execute the task and get suite ID
-                let suiteID = try await suiteCreationTask.value
+                let apiStartTime = Date()
+                let suiteID = try await asyncService.startSuite(operation: operation, launchID: launchID)
+                Logger.shared.info("📡 API call completed in \(Int(Date().timeIntervalSince(apiStartTime) * 1000))ms", correlationID: correlationID)
 
                 // Update operation with suite ID
                 operation.suiteID = suiteID
                 await self.operationTracker.updateSuite(operation, identifier: identifier)
-
-                // Store root suite ID if this is root
-                if isRootSuite {
-                    self.rootSuiteID = suiteID
-                    Logger.shared.info("🎯 Root suite ID stored: \(suiteID)", correlationID: correlationID)
-                }
 
                 Logger.shared.info("✅ Suite started: \(suiteID)", correlationID: correlationID)
             } catch {
@@ -552,20 +480,12 @@ open class RPListener: NSObject, XCTestObservation {
                     return
                 }
                 
-                // Collect metadata
-                let metadata = self.collectTestMetadata()
-                
                 // Create test operation
                 var operation = TestOperation(
                     correlationID: correlationID,
                     testID: "", // Will be set after API call
                     suiteID: suiteID,
-                    testName: testName,
-                    className: className,
-                    status: nil,
-                    startTime: Date(),
-                    metadata: metadata,
-                    attachments: []
+                    testName: testName
                 )
                 operation.codeRef = codeRef
                 operation.attributes = attributes
@@ -624,43 +544,13 @@ open class RPListener: NSObject, XCTestObservation {
             }
         }
 
-        // Last resort: use root suite ID if available
-        // This happens when test class suite failed to start but root suite exists
-        if let rootID = self.rootSuiteID {
-            Logger.shared.error("""
-                ❌ SUITE LOOKUP FAILED - USING FALLBACK:
-                - Searching for: '\(className)'
-                - Registered suites: [\(allSuites.joined(separator: ", "))]
-                - Using root suite as fallback
-                - Impact: Test will appear at root level instead of under class suite
-                - Likely cause: testSuite.name != className (identifier mismatch)
-                - Action: Check logs above to see suite registration names vs test class names
-                """)
-            return rootID
-        }
-
         Logger.shared.error("""
-            ❌ CRITICAL: No suite found for class '\(className)' and no root suite available.
+            ❌ CRITICAL: No suite found for class '\(className)'.
             Tests cannot be reported to ReportPortal.
             """)
         return nil
     }
-    
-    // Helper to collect test metadata
-    private func collectTestMetadata() -> [String: String] {
-        var metadata: [String: String] = [:]
-        
-        // Add test plan name if available
-        if let testPlanName = MetadataCollector.getTestPlanName() {
-            metadata["testPlan"] = testPlanName
-        }
-        
-        // Add device info
-        metadata["os"] = DeviceHelper.osNameAndVersion()
-        
-        return metadata
-    }
-    
+
     @available(*, deprecated, message: "Use fun public func testCase(_ testCase: XCTestCase, didFailWithDescription description: String, inFile filePath: String?, atLine lineNumber: Int) for iOs 17+")
     public func testCase(_ testCase: XCTestCase, didRecord issue: XCTIssueReference) {
         let lineNumberString = issue.sourceCodeContext.location.map { " on line \($0.lineNumber)" } ?? ""

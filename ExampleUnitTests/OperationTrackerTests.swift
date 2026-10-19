@@ -35,8 +35,7 @@ final class OperationTrackerTests: XCTestCase {
             correlationID: UUID(),
             testID: "test-001",
             suiteID: "suite-001",
-            testName: "testExample",
-            className: "MyTestClass"
+            testName: "testExample"
         )
 
         // When: Register test
@@ -66,7 +65,6 @@ final class OperationTrackerTests: XCTestCase {
             testID: "test-002",
             suiteID: "suite-001",
             testName: "testUpdate",
-            className: "UpdateTestClass",
             status: .passed
         )
         await OperationTracker.shared.registerTest(operation, identifier: "UpdateTestClass.testUpdate")
@@ -86,8 +84,7 @@ final class OperationTrackerTests: XCTestCase {
             correlationID: UUID(),
             testID: "test-003",
             suiteID: "suite-001",
-            testName: "testUnregister",
-            className: "UnregisterTestClass"
+            testName: "testUnregister"
         )
         await OperationTracker.shared.registerTest(operation, identifier: "UnregisterTestClass.testUnregister")
 
@@ -99,47 +96,6 @@ final class OperationTrackerTests: XCTestCase {
         XCTAssertNil(retrieved, "Test should be unregistered")
     }
 
-    func testGetActiveTestCount() async {
-        // Given: Multiple tests registered
-        for i in 1...5 {
-            let operation = TestOperation(
-                correlationID: UUID(),
-                testID: "test-\(i)",
-                suiteID: "suite-001",
-                testName: "test\(i)",
-                className: "TestClass"
-            )
-            await OperationTracker.shared.registerTest(operation, identifier: "TestClass.test\(i)")
-        }
-
-        // When: Get active test count
-        let count = await OperationTracker.shared.getActiveTestCount()
-
-        // Then: Should match registered count
-        XCTAssertEqual(count, 5, "Should have 5 active tests")
-    }
-
-    func testGetAllTestIdentifiers() async {
-        // Given: Multiple tests registered
-        let identifiers = ["TestClass.test1", "TestClass.test2", "TestClass.test3"]
-        for (index, identifier) in identifiers.enumerated() {
-            let operation = TestOperation(
-                correlationID: UUID(),
-                testID: "test-\(index + 1)",
-                suiteID: "suite-001",
-                testName: "test\(index + 1)",
-                className: "TestClass"
-            )
-            await OperationTracker.shared.registerTest(operation, identifier: identifier)
-        }
-
-        // When: Get all identifiers
-        let allIdentifiers = await OperationTracker.shared.getAllTestIdentifiers()
-
-        // Then: Should contain all registered identifiers
-        XCTAssertEqual(Set(allIdentifiers), Set(identifiers), "Should return all registered identifiers")
-    }
-
     // MARK: - Suite Operation Management
 
     func testRegisterSuite() async {
@@ -147,12 +103,8 @@ final class OperationTrackerTests: XCTestCase {
         let operation = SuiteOperation(
             correlationID: UUID(),
             suiteID: "suite-001",
-            rootSuiteID: nil,
             suiteName: "MySuiteClass",
-            status: .passed,
-            startTime: Date(),
-            childTestIDs: [],
-            metadata: [:]
+            status: .passed
         )
 
         // When: Register suite
@@ -180,23 +132,18 @@ final class OperationTrackerTests: XCTestCase {
         var operation = SuiteOperation(
             correlationID: UUID(),
             suiteID: "suite-002",
-            rootSuiteID: nil,
             suiteName: "UpdateSuite",
-            status: .passed,
-            startTime: Date(),
-            childTestIDs: [],
-            metadata: [:]
+            status: .passed
         )
         await OperationTracker.shared.registerSuite(operation, identifier: "UpdateSuite")
 
-        // When: Update suite with child tests
-        operation.childTestIDs.append("test-001")
-        operation.childTestIDs.append("test-002")
+        // When: Update suite status
+        operation.status = .failed
         await OperationTracker.shared.updateSuite(operation, identifier: "UpdateSuite")
 
         // Then: Updated suite should be retrievable
         let retrieved = await OperationTracker.shared.getSuite(identifier: "UpdateSuite")
-        XCTAssertEqual(retrieved?.childTestIDs.count, 2, "Should have 2 child tests")
+        XCTAssertEqual(retrieved?.status, .failed, "Status should be updated to failed")
     }
 
     func testUnregisterSuite() async {
@@ -204,12 +151,8 @@ final class OperationTrackerTests: XCTestCase {
         let operation = SuiteOperation(
             correlationID: UUID(),
             suiteID: "suite-003",
-            rootSuiteID: nil,
             suiteName: "UnregisterSuite",
-            status: .passed,
-            startTime: Date(),
-            childTestIDs: [],
-            metadata: [:]
+            status: .passed
         )
         await OperationTracker.shared.registerSuite(operation, identifier: "UnregisterSuite")
 
@@ -221,29 +164,6 @@ final class OperationTrackerTests: XCTestCase {
         XCTAssertNil(retrieved, "Suite should be unregistered")
     }
 
-    func testGetActiveSuiteCount() async {
-        // Given: Multiple suites registered
-        for i in 1...3 {
-            let operation = SuiteOperation(
-                correlationID: UUID(),
-                suiteID: "suite-\(i)",
-                rootSuiteID: nil,
-                suiteName: "Suite\(i)",
-                status: .passed,
-                startTime: Date(),
-                childTestIDs: [],
-                metadata: [:]
-            )
-            await OperationTracker.shared.registerSuite(operation, identifier: "Suite\(i)")
-        }
-
-        // When: Get active suite count
-        let count = await OperationTracker.shared.getActiveSuiteCount()
-
-        // Then: Should match registered count
-        XCTAssertEqual(count, 3, "Should have 3 active suites")
-    }
-
     func testGetAllSuiteIdentifiers() async {
         // Given: Multiple suites registered
         let identifiers = ["Suite1", "Suite2", "Suite3"]
@@ -251,12 +171,8 @@ final class OperationTrackerTests: XCTestCase {
             let operation = SuiteOperation(
                 correlationID: UUID(),
                 suiteID: "suite-\(index + 1)",
-                rootSuiteID: nil,
                 suiteName: identifier,
-                status: .passed,
-                startTime: Date(),
-                childTestIDs: [],
-                metadata: [:]
+                status: .passed
             )
             await OperationTracker.shared.registerSuite(operation, identifier: identifier)
         }
@@ -282,8 +198,7 @@ final class OperationTrackerTests: XCTestCase {
                         correlationID: UUID(),
                         testID: "test-\(i)",
                         suiteID: "suite-001",
-                        testName: "test\(i)",
-                        className: "ConcurrentTestClass"
+                        testName: "test\(i)"
                     )
                     await OperationTracker.shared.registerTest(operation, identifier: "ConcurrentTestClass.test\(i)")
                 }
@@ -291,8 +206,10 @@ final class OperationTrackerTests: XCTestCase {
         }
 
         // Then: All tests should be registered (no race conditions)
-        let count = await OperationTracker.shared.getActiveTestCount()
-        XCTAssertEqual(count, testCount, "All concurrent registrations should succeed")
+        for i in 0..<testCount {
+            let registered = await OperationTracker.shared.getTest(identifier: "ConcurrentTestClass.test\(i)")
+            XCTAssertNotNil(registered, "All concurrent registrations should succeed")
+        }
     }
 
     func testConcurrentSuiteRegistration() async {
@@ -306,12 +223,8 @@ final class OperationTrackerTests: XCTestCase {
                     let operation = SuiteOperation(
                         correlationID: UUID(),
                         suiteID: "suite-\(i)",
-                        rootSuiteID: nil,
                         suiteName: "ConcurrentSuite\(i)",
-                        status: .passed,
-                        startTime: Date(),
-                        childTestIDs: [],
-                        metadata: [:]
+                        status: .passed
                     )
                     await OperationTracker.shared.registerSuite(operation, identifier: "ConcurrentSuite\(i)")
                 }
@@ -319,7 +232,7 @@ final class OperationTrackerTests: XCTestCase {
         }
 
         // Then: All suites should be registered (no race conditions)
-        let count = await OperationTracker.shared.getActiveSuiteCount()
+        let count = await OperationTracker.shared.getAllSuiteIdentifiers().count
         XCTAssertEqual(count, suiteCount, "All concurrent registrations should succeed")
     }
 
@@ -330,7 +243,6 @@ final class OperationTrackerTests: XCTestCase {
             testID: "test-rw",
             suiteID: "suite-001",
             testName: "testReadWrite",
-            className: "ReadWriteClass",
             status: .passed
         )
         await OperationTracker.shared.registerTest(operation, identifier: "ReadWriteClass.testReadWrite")
@@ -359,52 +271,6 @@ final class OperationTrackerTests: XCTestCase {
         XCTAssertNotNil(retrieved, "Test should still be accessible after concurrent access")
     }
 
-    // MARK: - Peak Operation Count Tests
-
-    func testPeakOperationCount() async {
-        // Given: Register and unregister operations
-
-        // Register 5 tests
-        for i in 1...5 {
-            let operation = TestOperation(
-                correlationID: UUID(),
-                testID: "test-\(i)",
-                suiteID: "suite-001",
-                testName: "test\(i)",
-                className: "PeakTestClass"
-            )
-            await OperationTracker.shared.registerTest(operation, identifier: "PeakTestClass.test\(i)")
-        }
-
-        // Register 3 suites
-        for i in 1...3 {
-            let operation = SuiteOperation(
-                correlationID: UUID(),
-                suiteID: "suite-\(i)",
-                rootSuiteID: nil,
-                suiteName: "PeakSuite\(i)",
-                status: .passed,
-                startTime: Date(),
-                childTestIDs: [],
-                metadata: [:]
-            )
-            await OperationTracker.shared.registerSuite(operation, identifier: "PeakSuite\(i)")
-        }
-
-        // Peak should be 8 (5 tests + 3 suites)
-        var peak = await OperationTracker.shared.getPeakOperationCount()
-        XCTAssertEqual(peak, 8, "Peak should be 8 operations")
-
-        // Unregister 3 tests
-        await OperationTracker.shared.unregisterTest(identifier: "PeakTestClass.test1")
-        await OperationTracker.shared.unregisterTest(identifier: "PeakTestClass.test2")
-        await OperationTracker.shared.unregisterTest(identifier: "PeakTestClass.test3")
-
-        // Peak should still be 8 (doesn't decrease)
-        peak = await OperationTracker.shared.getPeakOperationCount()
-        XCTAssertEqual(peak, 8, "Peak should remain at 8 even after unregistering")
-    }
-
     // MARK: - Reset Tests
 
     func testReset_ClearsAllState() async {
@@ -413,20 +279,15 @@ final class OperationTrackerTests: XCTestCase {
             correlationID: UUID(),
             testID: "test-reset",
             suiteID: "suite-001",
-            testName: "testReset",
-            className: "ResetClass"
+            testName: "testReset"
         )
         await OperationTracker.shared.registerTest(testOp, identifier: "ResetClass.testReset")
 
         let suiteOp = SuiteOperation(
             correlationID: UUID(),
             suiteID: "suite-reset",
-            rootSuiteID: nil,
             suiteName: "ResetSuite",
-            status: .passed,
-            startTime: Date(),
-            childTestIDs: [],
-            metadata: [:]
+            status: .passed
         )
         await OperationTracker.shared.registerSuite(suiteOp, identifier: "ResetSuite")
 
@@ -434,77 +295,11 @@ final class OperationTrackerTests: XCTestCase {
         await OperationTracker.shared.reset()
 
         // Then: All state should be cleared
-        let testCount = await OperationTracker.shared.getActiveTestCount()
-        let suiteCount = await OperationTracker.shared.getActiveSuiteCount()
-        let peak = await OperationTracker.shared.getPeakOperationCount()
+        let test = await OperationTracker.shared.getTest(identifier: "ResetClass.testReset")
+        let suites = await OperationTracker.shared.getAllSuiteIdentifiers()
 
-        XCTAssertEqual(testCount, 0, "Test count should be 0 after reset")
-        XCTAssertEqual(suiteCount, 0, "Suite count should be 0 after reset")
-        XCTAssertEqual(peak, 0, "Peak count should be 0 after reset")
+        XCTAssertNil(test, "Tests should be cleared after reset")
+        XCTAssertTrue(suites.isEmpty, "Suites should be cleared after reset")
     }
 
-    // MARK: - Integration Tests
-
-    func testFullOperationLifecycle() async {
-        // Given: Complete test hierarchy
-
-        // Register root suite
-        let rootSuite = SuiteOperation(
-            correlationID: UUID(),
-            suiteID: "suite-root",
-            rootSuiteID: nil,
-            suiteName: "RootSuite.xctest",
-            status: .passed,
-            startTime: Date(),
-            childTestIDs: [],
-            metadata: [:]
-        )
-        await OperationTracker.shared.registerSuite(rootSuite, identifier: "RootSuite.xctest")
-
-        // Register test class suite
-        let testClassSuite = SuiteOperation(
-            correlationID: UUID(),
-            suiteID: "suite-testclass",
-            rootSuiteID: "suite-root",
-            suiteName: "MyTestClass",
-            status: .passed,
-            startTime: Date(),
-            childTestIDs: [],
-            metadata: [:]
-        )
-        await OperationTracker.shared.registerSuite(testClassSuite, identifier: "MyTestClass")
-
-        // Register tests
-        for i in 1...3 {
-            let test = TestOperation(
-                correlationID: UUID(),
-                testID: "test-\(i)",
-                suiteID: "suite-testclass",
-                testName: "test\(i)",
-                className: "MyTestClass"
-            )
-            await OperationTracker.shared.registerTest(test, identifier: "MyTestClass.test\(i)")
-        }
-
-        // Verify hierarchy
-        let tests = await OperationTracker.shared.getActiveTestCount()
-        let suites = await OperationTracker.shared.getActiveSuiteCount()
-        XCTAssertEqual(tests, 3, "Should have 3 tests")
-        XCTAssertEqual(suites, 2, "Should have 2 suites")
-
-        // Cleanup tests
-        for i in 1...3 {
-            await OperationTracker.shared.unregisterTest(identifier: "MyTestClass.test\(i)")
-        }
-
-        // Cleanup suites
-        await OperationTracker.shared.unregisterSuite(identifier: "MyTestClass")
-        await OperationTracker.shared.unregisterSuite(identifier: "RootSuite.xctest")
-
-        // Verify cleanup
-        let finalTests = await OperationTracker.shared.getActiveTestCount()
-        let finalSuites = await OperationTracker.shared.getActiveSuiteCount()
-        XCTAssertEqual(finalTests, 0, "All tests should be cleaned up")
-        XCTAssertEqual(finalSuites, 0, "All suites should be cleaned up")
-    }
 }

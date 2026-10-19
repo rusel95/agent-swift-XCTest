@@ -218,7 +218,7 @@ open class RPListener: NSObject, XCTestObservation {
         // The test bundle is passed so the Info.plist tier can be read: on real-device
         // farms it is the only channel that reaches every shard.
         let launchUUID = LaunchUUID.resolve(from: testBundle)
-        Logger.shared.info("📦 Launch UUID: \(launchUUID)")
+        Logger.shared.info("📦 Launch UUID: \(launchUUID) (from \(LaunchUUID.source))")
 
         collapseRetries = RPListener.resolveCollapseRetries(from: testBundle)
         if LaunchUUID.source != .generated {
@@ -303,15 +303,11 @@ open class RPListener: NSObject, XCTestObservation {
     /// half a second would lose every class it runs. Read the launch's stored start time and
     /// never stamp earlier than it.
     static func alignClock(withSharedLaunch uuid: String, using service: ReportingServiceProtocol) async {
-        for attempt in 1...5 {
-            if let start = try? await service.launchStartTime(uuid: uuid) {
-                TimeHelper.clamp(notBefore: start)
-                Logger.shared.info("🕒 Timestamps aligned to the shared launch start: \(start)")
-                return
-            }
-            try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
+        if let start = await TimeHelper.clamp(toStoredStart: { try await service.launchStartTime(uuid: uuid) }) {
+            Logger.shared.info("🕒 Timestamps aligned to the shared launch start: \(start)")
+        } else {
+            Logger.shared.warning("⚠️ Could not read the shared launch's start time; a device clock lagging the creator's may lose items")
         }
-        Logger.shared.warning("⚠️ Could not read the shared launch's start time; a device clock lagging the creator's may lose items")
     }
 
     /// Whether this process finishes a suite shared with other processes. Finishing a suite
@@ -605,16 +601,15 @@ open class RPListener: NSObject, XCTestObservation {
     
     // Helper to get current suite ID for a test class
     // XCTest suite names should match the class name for test class suites
-    // Uses event-driven waiting (continuations) to handle async suite registration
     private func getCurrentSuiteID(for className: String) async -> String? {
-        // The suite's start ran earlier in this class's chain, so it is registered by now —
+        // Every test request waits for its suite's start, so the suite is registered by now —
         // unless it failed to start. Don't wait: that would stall every later request of the class.
         if let suiteOp = await self.operationTracker.getSuite(identifier: className), !suiteOp.suiteID.isEmpty {
             return suiteOp.suiteID
         }
         Logger.shared.warning("Suite '\(className)' is not started")
 
-        // If exact match failed after waiting, check all registered suites for potential matches
+        // If the exact match failed, check all registered suites for potential matches
         // This handles edge cases where XCTest might provide different naming
         let allSuites = await self.operationTracker.getAllSuiteIdentifiers()
         Logger.shared.debug("Searching for suite matching class '\(className)' in: [\(allSuites.joined(separator: ", "))]")
@@ -803,7 +798,7 @@ open class RPListener: NSObject, XCTestObservation {
             }
 
             if let sharedUUID = operation.sharedUUID {
-                let status = operation.ranWholeClass ? nil : try? await asyncService.itemStatus(uuid: sharedUUID)
+                let status = operation.ranWholeClass ? nil : try? await asyncService.item(uuid: sharedUUID).status
                 guard RPListener.finishesSharedSuite(ranWholeClass: operation.ranWholeClass, statusNow: status) else {
                     await self.operationTracker.unregisterSuite(identifier: identifier)
                     Logger.shared.info("🔗 Shared suite '\(identifier)' left open: another device is running part of it", correlationID: operation.correlationID)
@@ -914,15 +909,8 @@ open class RPListener: NSObject, XCTestObservation {
     /// explicit RP_SKIP_FINISH=false is honored, and a String "YES" in Info.plist is not silently
     /// ignored. Static so it can be unit-tested without instantiating an observer.
     static func resolveSkipFinish(from testBundle: Bundle?) -> Bool {
-        if let envValue = ProcessInfo.processInfo.environment["RP_SKIP_FINISH"],
-           let parsed = parseBoolFlag(envValue) {
-            Logger.shared.info("⏭️ skipFinish from env var: \(parsed)")
-            return parsed
-        }
-        if let plistValue = testBundle?.object(forInfoDictionaryKey: "ReportPortalSkipFinish"),
-           let parsed = parseBoolFlag(plistValue) {
-            Logger.shared.info("⏭️ skipFinish from Info.plist: \(parsed)")
-            return parsed
+        if let flag = boolFlag(env: "RP_SKIP_FINISH", plistKey: "ReportPortalSkipFinish", from: testBundle) {
+            return flag
         }
         // A launch UUID compiled into the Info.plist is shared by every shard of the run,
         // so this process does not own the launch: finalizing it here would close the
@@ -941,17 +929,21 @@ open class RPListener: NSObject, XCTestObservation {
     /// a retry (one row) or the same suite on several device models (separate rows), and only the
     /// setup knows which.
     static func resolveCollapseRetries(from testBundle: Bundle?) -> Bool {
-        if let envValue = ProcessInfo.processInfo.environment["RP_COLLAPSE_RETRIES"],
-           let parsed = parseBoolFlag(envValue) {
-            Logger.shared.info("🔁 collapseRetries from env var: \(parsed)")
+        boolFlag(env: "RP_COLLAPSE_RETRIES", plistKey: "ReportPortalCollapseRetries", from: testBundle) ?? false
+    }
+
+    /// A boolean setting: the `env` variable first, then `plistKey` in the test bundle's
+    /// Info.plist. `nil` when neither holds a recognized value.
+    static func boolFlag(env: String, plistKey: String, from testBundle: Bundle?) -> Bool? {
+        if let parsed = parseBoolFlag(ProcessInfo.processInfo.environment[env]) {
+            Logger.shared.info("⚙️ \(env) from env var: \(parsed)")
             return parsed
         }
-        if let plistValue = testBundle?.object(forInfoDictionaryKey: "ReportPortalCollapseRetries"),
-           let parsed = parseBoolFlag(plistValue) {
-            Logger.shared.info("🔁 collapseRetries from Info.plist: \(parsed)")
+        if let parsed = parseBoolFlag(testBundle?.object(forInfoDictionaryKey: plistKey)) {
+            Logger.shared.info("⚙️ \(plistKey) from Info.plist: \(parsed)")
             return parsed
         }
-        return false
+        return nil
     }
 
     /// Parse a boolean from a Bool/NSNumber or a String ("true"/"yes"/"1" → true,

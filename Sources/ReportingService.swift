@@ -196,7 +196,7 @@ public final class ReportingService: Sendable {
     /// earlier: ReportPortal drops a child that starts before its parent, silently on the async
     /// API, so a device whose clock lags the suite's creator would lose its tests.
     private func joinSharedSuite(operation: SuiteOperation, uuid: String, launchID: String) async throws -> String {
-        if let start = try? await itemStartTime(uuid: uuid) {
+        if let start = try? await item(uuid: uuid).startTime?.date {
             TimeHelper.clamp(notBefore: start)
             Logger.shared.info("🔗 Joined shared suite '\(operation.suiteName)' (\(uuid))", correlationID: operation.correlationID)
             return uuid
@@ -211,29 +211,17 @@ public final class ReportingService: Sendable {
         )
         let _: Item = try await httpClient.callEndPoint(endPoint)
 
-        // v2 reporting is asynchronous: the suite can take a moment to become readable.
-        for attempt in 1...5 {
-            if let start = try? await itemStartTime(uuid: uuid) {
-                TimeHelper.clamp(notBefore: start)
-                Logger.shared.info("🔗 Created shared suite '\(operation.suiteName)' (\(uuid))", correlationID: operation.correlationID)
-                return uuid
-            }
-            try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
+        if await TimeHelper.clamp(toStoredStart: { try await self.item(uuid: uuid).startTime?.date }) != nil {
+            Logger.shared.info("🔗 Created shared suite '\(operation.suiteName)' (\(uuid))", correlationID: operation.correlationID)
+        } else {
+            Logger.shared.warning("⚠️ Could not read shared suite '\(operation.suiteName)' back; a lagging device clock may lose its tests", correlationID: operation.correlationID)
         }
-        Logger.shared.warning("⚠️ Could not read shared suite '\(operation.suiteName)' back; a lagging device clock may lose its tests", correlationID: operation.correlationID)
         return uuid
     }
 
-    /// Start time of an item as ReportPortal stored it. Throws while the item does not exist.
-    func itemStartTime(uuid: String) async throws -> Date? {
-        let item: ItemResource = try await httpClientV1.callEndPoint(GetItemByUuidEndPoint(uuid: uuid))
-        return item.startTime?.date
-    }
-
-    /// Status of an item as ReportPortal stored it (`IN_PROGRESS` until it is finished).
-    func itemStatus(uuid: String) async throws -> String? {
-        let item: ItemResource = try await httpClientV1.callEndPoint(GetItemByUuidEndPoint(uuid: uuid))
-        return item.status
+    /// An item as ReportPortal stored it. Throws while it does not exist.
+    func item(uuid: String) async throws -> ItemResource {
+        try await httpClientV1.callEndPoint(GetItemByUuidEndPoint(uuid: uuid))
     }
 
     /// Finish suite item in ReportPortal
@@ -511,7 +499,7 @@ protocol ReportingServiceProtocol: Sendable {
     func launchStartTime(uuid: String) async throws -> Date?
     func startSuite(operation: SuiteOperation, launchID: String) async throws -> String
     func finishSuite(operation: SuiteOperation) async throws
-    func itemStatus(uuid: String) async throws -> String?
+    func item(uuid: String) async throws -> ItemResource
     func startTest(operation: TestOperation, launchID: String) async throws -> String
     func finishTest(operation: TestOperation) async throws
     func postLog(message: String, level: String, itemID: String, launchID: String, correlationID: UUID?) async throws

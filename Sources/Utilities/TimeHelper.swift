@@ -46,6 +46,19 @@ enum TimeHelper {
       notBefore = max(notBefore ?? date, date)
   }
 
+  /// Clamp to a start time ReportPortal stored, re-reading while asynchronous v2 reporting
+  /// hasn't made the item readable yet. Returns the start time, or nil if it never appeared.
+  static func clamp(toStoredStart read: () async throws -> Date?) async -> Date? {
+      for attempt in 1...5 {
+          if let start = try? await read() {
+              clamp(notBefore: start)
+              return start
+          }
+          try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
+      }
+      return nil
+  }
+
   /// Parses a ReportPortal timestamp ("2026-09-07T11:37:03.436Z" or "2026-09-07T13:28:14Z").
   static func date(fromServer string: String?) -> Date? {
       guard let string = string else { return nil }

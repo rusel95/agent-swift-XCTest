@@ -50,14 +50,6 @@ enum LaunchUUID {
         }
 
         let (value, source) = configuredLaunchUUID(from: testBundle) ?? (UUID().uuidString, .generated)
-        switch source {
-        case .environment:
-            Logger.shared.info("📦 [Shared] Launch UUID from RP_LAUNCH_UUID: \(value)")
-        case .infoPlist:
-            Logger.shared.info("📦 [Shared] Launch UUID from Info.plist: \(value) (all shards report into one launch)")
-        case .generated:
-            Logger.shared.info("📦 [Per-Process Mode] Generated launch UUID: \(value) (this process gets its own launch)")
-        }
         resolvedValue = value
         resolvedSource = source
         return value

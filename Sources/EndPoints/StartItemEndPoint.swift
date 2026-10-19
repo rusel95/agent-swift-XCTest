@@ -46,13 +46,10 @@ struct StartItemEndPoint: EndPoint {
       "type": type.rawValue,
       "attributes": attributes
     ]
-    if let uuid = uuid {
-      parameters["uuid"] = uuid
-    }
-    if let codeRef = codeRef {
-      parameters["codeRef"] = codeRef
-      parameters["testCaseId"] = codeRef
-    }
+    // Assigning nil leaves the key out.
+    parameters["uuid"] = uuid
+    parameters["codeRef"] = codeRef
+    parameters["testCaseId"] = codeRef
     if retry {
       parameters["retry"] = true
     }

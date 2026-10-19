@@ -237,7 +237,7 @@ final class RecordingReportingService: ReportingServiceProtocol, @unchecked Send
         return UUID().uuidString
     }
     func finishSuite(operation: SuiteOperation) async throws { record("finishSuite") }
-    func itemStatus(uuid: String) async throws -> String? { record("itemStatus"); return nil }
+    func item(uuid: String) async throws -> ItemResource { record("item"); return ItemResource(startTime: nil, status: nil) }
     func startTest(operation: TestOperation, launchID: String) async throws -> String {
         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms: make out-of-order finishes observable
         record("startTest")

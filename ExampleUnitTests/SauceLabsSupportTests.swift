@@ -136,34 +136,15 @@ final class IdempotentFinalizeLaunchTests: XCTestCase {
     }
 }
 
-// MARK: - Orphan-launch attribute back-fill endpoints
+// MARK: - Reading a launch
 
-/// Verifies the two endpoints behind `patchLaunchAttributes`, which back-fills attributes
-/// (e.g. `merge_group`) onto an orphan launch when `startLaunch` returns 409.
-final class OrphanLaunchBackfillEndpointTests: XCTestCase {
+/// The agent reads a launch, e.g. the start time ReportPortal stored, by its UUID.
+final class LaunchReadEndPointTests: XCTestCase {
 
     func testGetLaunchByUuidEndPoint_PathAndMethod() {
         let endPoint = GetLaunchByUuidEndPoint(uuid: "abc-123")
         XCTAssertEqual(endPoint.method, .get)
-        XCTAssertEqual(endPoint.relativePath, "launch/uuid/abc-123",
-                       "Must resolve the numeric id via GET launch/uuid/{uuid}")
-    }
-
-    func testUpdateLaunchEndPoint_PathMethodAndAttributes() {
-        let attributes = [
-            ["key": "merge_group", "value": "regression-42"],
-            ["key": "ci_run_id", "value": "42"]
-        ]
-        let endPoint = UpdateLaunchEndPoint(launchID: 777, attributes: attributes)
-
-        XCTAssertEqual(endPoint.method, .put)
-        XCTAssertEqual(endPoint.relativePath, "launch/777/update",
-                       "Update is keyed by the numeric launch id, not the UUID")
-
-        let sent = endPoint.parameters["attributes"] as? [[String: String]]
-        XCTAssertEqual(sent?.count, 2)
-        XCTAssertEqual(sent?.first?["key"], "merge_group")
-        XCTAssertEqual(sent?.first?["value"], "regression-42")
+        XCTAssertEqual(endPoint.relativePath, "launch/uuid/abc-123")
     }
 }
 
@@ -229,7 +210,6 @@ final class RecordingReportingService: ReportingServiceProtocol, @unchecked Send
         record("startLaunch")
         return uuid
     }
-    func patchLaunchAttributes(uuid: String, attributes: [[String: String]]) async throws { record("patchLaunchAttributes") }
     func launchStartTime(uuid: String) async throws -> Date? { record("launchStartTime"); return nil }
     func startSuite(operation: SuiteOperation, launchID: String) async throws -> String {
         try? await Task.sleep(nanoseconds: 100_000_000) // 100ms: slower than startTest, so a test racing its suite shows
@@ -237,10 +217,6 @@ final class RecordingReportingService: ReportingServiceProtocol, @unchecked Send
         return UUID().uuidString
     }
     func finishSuite(operation: SuiteOperation) async throws { record("finishSuite") }
-    func item(uuid: String) async throws -> ItemResource {
-        record("item")
-        return ItemResource(id: nil, uuid: nil, launchId: nil, startTime: nil, status: nil)
-    }
 
     private var _runningTests: [[String]?] = []
     /// Successive answers of `runningTests`, `nil` for a suite that can't be read; `[]` once they run out.
@@ -262,22 +238,23 @@ final class RecordingReportingService: ReportingServiceProtocol, @unchecked Send
     func finalizeLaunch(launchID: String) async throws { record("finalizeLaunch") }
 }
 
+/// A listener that reports to `recorder`, built with the test init that skips observer registration.
+private func makeListener(_ recorder: RecordingReportingService) -> RPListener {
+    RPListener(injectedConfiguration: AgentConfiguration(
+        reportPortalURL: URL(string: "https://example.invalid")!,
+        projectName: "proj",
+        launchName: "Launch",
+        shouldSendReport: true,
+        portalToken: "token",
+        tags: [],
+        launchMode: .default,
+        testNameRules: []
+    ), makeReportingService: { _ in recorder })
+}
+
 /// Drives the real `RPListener` XCTest callbacks (via a test init that skips observer
 /// registration) against the recording double, and asserts the launch-before-items ordering.
 final class LaunchGateOrderingTests: XCTestCase {
-
-    private func makeConfig() -> AgentConfiguration {
-        AgentConfiguration(
-            reportPortalURL: URL(string: "https://example.invalid")!,
-            projectName: "proj",
-            launchName: "Launch",
-            shouldSendReport: true,
-            portalToken: "token",
-            tags: [],
-            launchMode: .default,
-            testNameRules: []
-        )
-    }
 
     /// A class suite with one test: the agent doesn't report suites with nothing to run.
     private func suite(named name: String) -> XCTestSuite {
@@ -299,7 +276,7 @@ final class LaunchGateOrderingTests: XCTestCase {
         defer { unsetenv("RP_MERGE_GROUP") }
 
         let recorder = RecordingReportingService()
-        let listener = RPListener(injectedConfiguration: makeConfig(), makeReportingService: { _ in recorder })
+        let listener = makeListener(recorder)
 
         listener.testBundleWillStart(Bundle(for: RecordingReportingService.self))
         listener.testSuiteWillStart(suite(named: "CheckoutFeatureTests"))
@@ -332,7 +309,7 @@ final class LaunchGateOrderingTests: XCTestCase {
         var listeners: [RPListener] = []
         for i in 0..<deviceCount {
             let recorder = RecordingReportingService()
-            let listener = RPListener(injectedConfiguration: makeConfig(), makeReportingService: { _ in recorder })
+            let listener = makeListener(recorder)
             recorders.append(recorder)
             listeners.append(listener)
             listener.testBundleWillStart(Bundle(for: RecordingReportingService.self))
@@ -470,33 +447,15 @@ final class ReportingOrderTests: XCTestCase {
         @objc func other() {}
     }
 
-    /// Records request order; a slow `startTest` makes a missing wait visible.
-    private func makeListener(_ recorder: RecordingReportingService) -> RPListener {
-        RPListener(injectedConfiguration: AgentConfiguration(
-            reportPortalURL: URL(string: "https://example.invalid")!,
-            projectName: "proj",
-            launchName: "Launch",
-            shouldSendReport: true,
-            portalToken: "token",
-            tags: [],
-            launchMode: .default,
-            testNameRules: []
-        ), makeReportingService: { _ in recorder })
+    /// XCTest names this class's suite `RenamedOrderingSample`, not after its Swift name.
+    @objc(RenamedOrderingSample) final class RenamedSample: XCTestCase {
+        @objc func sample() {}
     }
 
     // Synchronous on purpose: XCTest runs it on the main thread, like the real callbacks.
     func testClassRequestsGoOutInCallbackOrderAndTheBundleEndWaitsForThem() {
         let recorder = RecordingReportingService()
-        let listener = RPListener(injectedConfiguration: AgentConfiguration(
-            reportPortalURL: URL(string: "https://example.invalid")!,
-            projectName: "proj",
-            launchName: "Launch",
-            shouldSendReport: true,
-            portalToken: "token",
-            tags: [],
-            launchMode: .default,
-            testNameRules: []
-        ), makeReportingService: { _ in recorder })
+        let listener = makeListener(recorder)
 
         let test = OrderingSample(selector: #selector(OrderingSample.sample))
         let suite = XCTestSuite(name: "OrderingSample")
@@ -517,16 +476,7 @@ final class ReportingOrderTests: XCTestCase {
 
     func testAClassFilteredDownToNoTestsIsNotReported() {
         let recorder = RecordingReportingService()
-        let listener = RPListener(injectedConfiguration: AgentConfiguration(
-            reportPortalURL: URL(string: "https://example.invalid")!,
-            projectName: "proj",
-            launchName: "Launch",
-            shouldSendReport: true,
-            portalToken: "token",
-            tags: [],
-            launchMode: .default,
-            testNameRules: []
-        ), makeReportingService: { _ in recorder })
+        let listener = makeListener(recorder)
 
         let empty = XCTestSuite(name: "OrderingSample")
         listener.testBundleWillStart(Bundle(for: ReportingOrderTests.self))
@@ -535,6 +485,101 @@ final class ReportingOrderTests: XCTestCase {
         listener.testBundleDidFinish(Bundle(for: ReportingOrderTests.self))
 
         XCTAssertEqual(recorder.calls, ["startLaunch", "finalizeLaunch"])
+    }
+
+    /// XCTest's own suites ("All tests", the `.xctest` bundle) hold suites, not tests: only the
+    /// class suite inside them is reported.
+    func testOnlyTheClassSuiteIsReported() {
+        let recorder = RecordingReportingService()
+        let listener = makeListener(recorder)
+        let test = OrderingSample(selector: #selector(OrderingSample.sample))
+        let classSuite = XCTestSuite(name: "OrderingSample")
+        classSuite.addTest(test)
+        let bundleSuite = XCTestSuite(name: "ExampleUnitTests.xctest")
+        bundleSuite.addTest(classSuite)
+        let allTests = XCTestSuite(name: "All tests")
+        allTests.addTest(bundleSuite)
+
+        listener.testBundleWillStart(Bundle(for: ReportingOrderTests.self))
+        [allTests, bundleSuite, classSuite].forEach(listener.testSuiteWillStart)
+        listener.testCaseWillStart(test)
+        listener.testCaseDidFinish(test)
+        [classSuite, bundleSuite, allTests].forEach(listener.testSuiteDidFinish)
+        listener.testBundleDidFinish(Bundle(for: ReportingOrderTests.self))
+
+        XCTAssertEqual(recorder.calls, ["startLaunch", "startSuite", "startTest", "finishTest", "finishSuite", "finalizeLaunch"])
+    }
+
+    /// XCTest names the suite of a nested class (`_TtCC…OrderingSample`) or an `@objc(Name)` class
+    /// differently from the Swift type name its tests report; they still belong together.
+    func testNestedAndRenamedClassesReportTheirTests() {
+        let cases: [XCTestCase] = [OrderingSample(selector: #selector(OrderingSample.sample)),
+                                   RenamedSample(selector: #selector(RenamedSample.sample))]
+        for test in cases {
+            let recorder = RecordingReportingService()
+            let listener = makeListener(recorder)
+            let suite = XCTestSuite(name: NSStringFromClass(type(of: test)))
+            suite.addTest(test)
+
+            listener.testBundleWillStart(Bundle(for: ReportingOrderTests.self))
+            listener.testSuiteWillStart(suite)
+            listener.testCaseWillStart(test)
+            listener.testCaseDidFinish(test)
+            listener.testSuiteDidFinish(suite)
+            listener.testBundleDidFinish(Bundle(for: ReportingOrderTests.self))
+
+            XCTAssertEqual(recorder.calls, ["startLaunch", "startSuite", "startTest", "finishTest", "finishSuite", "finalizeLaunch"],
+                           suite.name)
+        }
+    }
+
+    func testASuiteFinishesAfterAllItsTestsWhileTestsReportSideBySide() {
+        let recorder = RecordingReportingService()
+        let listener = makeListener(recorder)
+        let first = OrderingSample(selector: #selector(OrderingSample.sample))
+        let second = OrderingSample(selector: #selector(OrderingSample.other))
+        let suite = XCTestSuite(name: "OrderingSample")
+        suite.addTest(first)
+        suite.addTest(second)
+
+        let started = Date()
+        listener.testBundleWillStart(Bundle(for: ReportingOrderTests.self))
+        listener.testSuiteWillStart(suite)
+        for test in [first, second] {
+            listener.testCaseWillStart(test)
+            listener.testCaseDidFinish(test)
+        }
+        listener.testSuiteDidFinish(suite)
+        listener.testBundleDidFinish(Bundle(for: ReportingOrderTests.self))
+
+        let calls = recorder.calls
+        XCTAssertEqual(calls.filter { $0 == "finishTest" }.count, 2)
+        XCTAssertEqual(Array(calls.suffix(2)), ["finishSuite", "finalizeLaunch"], "\(calls)")
+        XCTAssertEqual(Array(calls.prefix(2)), ["startLaunch", "startSuite"], "\(calls)")
+        // Each start sleeps 50 ms; the two tests overlap instead of queueing behind each other.
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+
+    func testARepeatedClassRunReportsItsTestsUnderTheNewSuite() {
+        let recorder = RecordingReportingService()
+        let listener = makeListener(recorder)
+        let test = OrderingSample(selector: #selector(OrderingSample.sample))
+        let suite = XCTestSuite(name: "OrderingSample")
+        suite.addTest(test)
+
+        listener.testBundleWillStart(Bundle(for: ReportingOrderTests.self))
+        for _ in 1...2 { // `-test-iterations 2`: the whole class runs twice in one process
+            listener.testSuiteWillStart(suite)
+            listener.testCaseWillStart(test)
+            listener.testCaseDidFinish(test)
+            listener.testSuiteDidFinish(suite)
+        }
+        listener.testBundleDidFinish(Bundle(for: ReportingOrderTests.self))
+
+        XCTAssertEqual(recorder.calls, ["startLaunch",
+                                        "startSuite", "startTest", "finishTest", "finishSuite",
+                                        "startSuite", "startTest", "finishTest", "finishSuite",
+                                        "finalizeLaunch"])
     }
 }
 
@@ -617,60 +662,5 @@ final class CollapseRetriesTests: XCTestCase {
         setenv("RP_COLLAPSE_RETRIES", "YES", 1)
         defer { unsetenv("RP_COLLAPSE_RETRIES") }
         XCTAssertTrue(RPListener.resolveCollapseRetries(from: nil))
-    }
-}
-
-extension ReportingOrderTests {
-
-    func testASuiteFinishesAfterAllItsTestsWhileTestsReportSideBySide() {
-        let recorder = RecordingReportingService()
-        let listener = makeListener(recorder)
-        let first = OrderingSample(selector: #selector(OrderingSample.sample))
-        let second = OrderingSample(selector: #selector(OrderingSample.other))
-        let suite = XCTestSuite(name: "OrderingSample")
-        suite.addTest(first)
-        suite.addTest(second)
-
-        let started = Date()
-        listener.testBundleWillStart(Bundle(for: ReportingOrderTests.self))
-        listener.testSuiteWillStart(suite)
-        for test in [first, second] {
-            listener.testCaseWillStart(test)
-            listener.testCaseDidFinish(test)
-        }
-        listener.testSuiteDidFinish(suite)
-        listener.testBundleDidFinish(Bundle(for: ReportingOrderTests.self))
-
-        let calls = recorder.calls
-        XCTAssertEqual(calls.filter { $0 == "finishTest" }.count, 2)
-        XCTAssertEqual(Array(calls.suffix(2)), ["finishSuite", "finalizeLaunch"], "\(calls)")
-        XCTAssertEqual(Array(calls.prefix(2)), ["startLaunch", "startSuite"], "\(calls)")
-        // Each start sleeps 50 ms; the two tests overlap instead of queueing behind each other.
-        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
-    }
-}
-
-extension ReportingOrderTests {
-
-    func testARepeatedClassRunReportsItsTestsUnderTheNewSuite() {
-        let recorder = RecordingReportingService()
-        let listener = makeListener(recorder)
-        let test = OrderingSample(selector: #selector(OrderingSample.sample))
-        let suite = XCTestSuite(name: "OrderingSample")
-        suite.addTest(test)
-
-        listener.testBundleWillStart(Bundle(for: ReportingOrderTests.self))
-        for _ in 1...2 { // `-test-iterations 2`: the whole class runs twice in one process
-            listener.testSuiteWillStart(suite)
-            listener.testCaseWillStart(test)
-            listener.testCaseDidFinish(test)
-            listener.testSuiteDidFinish(suite)
-        }
-        listener.testBundleDidFinish(Bundle(for: ReportingOrderTests.self))
-
-        XCTAssertEqual(recorder.calls, ["startLaunch",
-                                        "startSuite", "startTest", "finishTest", "finishSuite",
-                                        "startSuite", "startTest", "finishTest", "finishSuite",
-                                        "finalizeLaunch"])
     }
 }

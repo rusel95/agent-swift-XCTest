@@ -35,10 +35,9 @@ public final class ReportingService: Sendable {
     // MARK: - Properties
 
     private let httpClient: HTTPClient
-    /// Separate client pinned to the **v1** API. ReportPortal's launch *read* and *update*
-    /// endpoints (`GET launch/uuid/{uuid}`, `PUT launch/{id}/update`) only exist under
-    /// `/api/v1`, while `httpClient` is pinned to `/api/v2` (start/finish/merge). Used by
-    /// `patchLaunchAttributes` to back-fill attributes onto an orphan launch.
+    /// Separate client pinned to the **v1** API. ReportPortal's *read* endpoints
+    /// (`GET launch/uuid/{uuid}`, `GET item/…`) only exist under `/api/v1`, while `httpClient`
+    /// is pinned to `/api/v2` (start/finish/merge).
     private let httpClientV1: HTTPClient
     private let configuration: AgentConfiguration
 
@@ -109,27 +108,6 @@ public final class ReportingService: Sendable {
         }
     }
 
-    /// Back-fill attributes onto an existing launch.
-    ///
-    /// On real-device farms (SauceLabs), ReportPortal can auto-create a bare "orphan"
-    /// launch from the first test-item POST that references a launch UUID it hasn't seen
-    /// yet — a race the launch gate narrows but can't fully close across the network.
-    /// That orphan has none of our attributes (no `merge_group`), so the post-run merge
-    /// script — which finds launches by `merge_group` — can't see it. When `startLaunch`
-    /// then returns 409 (the orphan already holds our UUID), we resolve the orphan's
-    /// numeric id from its UUID and PUT the full attribute set onto it, making it
-    /// mergeable like a normally-created launch.
-    /// - Parameters:
-    ///   - uuid: The launch UUID (same one `startLaunch` used).
-    ///   - attributes: The full attribute set to apply (metadata + `merge_group` + `ci_run_id`).
-    func patchLaunchAttributes(uuid: String, attributes: [[String: String]]) async throws {
-        let launch: Launch = try await httpClientV1.callEndPoint(GetLaunchByUuidEndPoint(uuid: uuid))
-        let _: LaunchUpdateResponse = try await httpClientV1.callEndPoint(
-            UpdateLaunchEndPoint(launchID: launch.id, attributes: attributes)
-        )
-        Logger.shared.info("📎 Back-filled \(attributes.count) attribute(s) onto existing launch \(uuid) (id: \(launch.id))")
-    }
-
     /// Start time of a launch as ReportPortal stored it. Throws while the launch does not exist
     /// yet — v2 reporting is asynchronous, so a just-started launch can lag behind.
     func launchStartTime(uuid: String) async throws -> Date? {
@@ -193,7 +171,7 @@ public final class ReportingService: Sendable {
     }
 
     /// An item as ReportPortal stored it. Throws while it does not exist.
-    func item(uuid: String) async throws -> ItemResource {
+    private func item(uuid: String) async throws -> ItemResource {
         try await httpClientV1.callEndPoint(GetItemByUuidEndPoint(uuid: uuid))
     }
 
@@ -328,14 +306,12 @@ public final class ReportingService: Sendable {
     }
 }
 
-// MARK: - Orphan-launch attribute back-fill (SauceLabs)
+// MARK: - Read endpoints (v1)
 //
-// These two endpoints support `patchLaunchAttributes(uuid:attributes:)`. They live here
-// (rather than in Sources/EndPoints/) so both SPM and the Xcode project compile them
-// without a project-file change.
+// They live here (rather than in Sources/EndPoints/) so both SPM and the Xcode project compile
+// them without a project-file change.
 
-/// `GET launch/uuid/{uuid}` — resolve a launch's numeric `id` from its UUID.
-/// (ReportPortal's update endpoint is keyed by the numeric id, not the UUID.)
+/// `GET launch/uuid/{uuid}` — read a launch, e.g. the start time ReportPortal stored.
 struct GetLaunchByUuidEndPoint: EndPoint {
     let method: HTTPMethod = .get
     let relativePath: String
@@ -378,7 +354,6 @@ struct ItemResource: Decodable {
     let uuid: String?
     let launchId: Int?
     let startTime: ServerTime?
-    let status: String?
 }
 
 /// A page of items, as `GET item` returns it.
@@ -395,25 +370,6 @@ struct ItemPage: Decodable {
     }
 }
 
-/// `PUT launch/{id}/update` — replace a launch's attributes (used to back-fill
-/// `merge_group` and metadata onto an orphan launch so the post-run merge can find it).
-struct UpdateLaunchEndPoint: EndPoint {
-    let method: HTTPMethod = .put
-    let relativePath: String
-    let parameters: [String: Any]
-
-    init(launchID: Int, attributes: [[String: String]]) {
-        relativePath = "launch/\(launchID)/update"
-        parameters = ["attributes": attributes]
-    }
-}
-
-/// Lenient response for `PUT launch/{id}/update` (ReportPortal returns `{ "message": ... }`).
-/// All-optional so a differently-shaped success body still decodes.
-struct LaunchUpdateResponse: Decodable {
-    let message: String?
-}
-
 // MARK: - ReportingServiceProtocol (ordering test seam)
 //
 // `RPListener` depends on this protocol rather than the concrete `ReportingService`, so unit
@@ -424,11 +380,9 @@ struct LaunchUpdateResponse: Decodable {
 // it without a project-file change.
 protocol ReportingServiceProtocol: Sendable {
     func startLaunch(name: String, tags: [String], attributes: [[String: String]], uuid: String) async throws -> String
-    func patchLaunchAttributes(uuid: String, attributes: [[String: String]]) async throws
     func launchStartTime(uuid: String) async throws -> Date?
     func startSuite(operation: SuiteOperation, launchID: String) async throws -> String
     func finishSuite(operation: SuiteOperation) async throws
-    func item(uuid: String) async throws -> ItemResource
     func runningTests(inSuite uuid: String) async throws -> [String]
     func startTest(operation: TestOperation, launchID: String) async throws -> String
     func finishTest(operation: TestOperation) async throws

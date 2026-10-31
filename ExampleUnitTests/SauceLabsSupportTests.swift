@@ -592,6 +592,15 @@ final class CollapseRetriesTests: XCTestCase {
         XCTAssertFalse(unreadable, "left to the launch finish")
     }
 
+    func testRunningTests_AnUnreadPageMeansUnknown() throws {
+        let whole = #"{"content":[{"uuid":"a"},{"uuid":"b"}],"page":{"number":1,"size":100,"totalElements":2,"totalPages":1}}"#
+        XCTAssertEqual(try JSONDecoder().decode(ItemPage.self, from: Data(whole.utf8)).allUUIDs(), ["a", "b"])
+
+        let truncated = #"{"content":[{"uuid":"a"}],"page":{"number":1,"size":1,"totalElements":2,"totalPages":2}}"#
+        XCTAssertThrowsError(try JSONDecoder().decode(ItemPage.self, from: Data(truncated.utf8)).allUUIDs(),
+                             "a test on a page not read may be running on another device")
+    }
+
     func testRunningChildrenQuery_FiltersByParentLaunchAndStatus() {
         let endPoint = GetRunningChildrenEndPoint(parentID: 7, launchID: 3)
         XCTAssertEqual(endPoint.relativePath, "item")

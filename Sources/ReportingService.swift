@@ -203,10 +203,10 @@ public final class ReportingService: Sendable {
         guard let id = suite.id, let launchID = suite.launchId else {
             throw HTTPClientError.decodingError("Item \(uuid) has no id or launchId")
         }
-        let page: ItemPage = try await httpClientV1.callEndPoint(
+        let running: ItemPage = try await httpClientV1.callEndPoint(
             GetRunningChildrenEndPoint(parentID: id, launchID: launchID)
         )
-        return page.content.compactMap { $0.uuid }
+        return try running.allUUIDs()
     }
 
     /// Finish suite item in ReportPortal
@@ -384,6 +384,15 @@ struct ItemResource: Decodable {
 /// A page of items, as `GET item` returns it.
 struct ItemPage: Decodable {
     let content: [ItemResource]
+    let page: Page?
+
+    /// The items' uuids. Throws when the server holds more than this page, so none is missed.
+    func allUUIDs() throws -> [String] {
+        guard (page?.totalElements ?? content.count) <= content.count else {
+            throw HTTPClientError.decodingError("\(content.count) of \(page?.totalElements ?? 0) items fit in one page")
+        }
+        return content.compactMap { $0.uuid }
+    }
 }
 
 /// `PUT launch/{id}/update` — replace a launch's attributes (used to back-fill

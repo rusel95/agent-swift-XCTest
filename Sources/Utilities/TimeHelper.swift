@@ -54,7 +54,9 @@ enum TimeHelper {
               clamp(notBefore: start)
               return start
           }
-          try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
+          if attempt < 5 {
+              try? await Task.sleep(nanoseconds: UInt64(attempt) * 500_000_000)
+          }
       }
       return nil
   }

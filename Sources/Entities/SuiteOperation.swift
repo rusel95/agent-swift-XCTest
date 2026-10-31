@@ -37,8 +37,9 @@ struct SuiteOperation: Sendable {
     /// this process creates (and finishes) its own suite.
     var sharedUUID: String?
 
-    /// Whether this process ran every test of the class, not a slice of it.
-    var ranWholeClass = true
+    /// Tests this process started in the suite. On the async API they can still read as running
+    /// after this process finished them, so they never keep a shared suite open.
+    var testIDs: Set<String> = []
 
     /// Initialize a new suite operation
     init(

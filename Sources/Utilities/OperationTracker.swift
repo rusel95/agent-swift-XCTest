@@ -88,6 +88,11 @@ actor OperationTracker {
         suiteOperations[identifier] = operation
     }
 
+    /// Record a test this process started in the suite
+    func addTest(_ testID: String, toSuite identifier: String) {
+        suiteOperations[identifier]?.testIDs.insert(testID)
+    }
+
     /// Remove suite operation after reporting complete
     /// - Parameter identifier: XCTest suite identifier
     func unregisterSuite(identifier: String) {

@@ -237,7 +237,20 @@ final class RecordingReportingService: ReportingServiceProtocol, @unchecked Send
         return UUID().uuidString
     }
     func finishSuite(operation: SuiteOperation) async throws { record("finishSuite") }
-    func item(uuid: String) async throws -> ItemResource { record("item"); return ItemResource(startTime: nil, status: nil) }
+    func item(uuid: String) async throws -> ItemResource {
+        record("item")
+        return ItemResource(id: nil, uuid: nil, launchId: nil, startTime: nil, status: nil)
+    }
+
+    private var _runningTests: [[String]?] = []
+    /// Successive answers of `runningTests`, `nil` for a suite that can't be read; `[]` once they run out.
+    func queueRunningTests(_ answers: [[String]?]) { withLock { _runningTests = answers } }
+    func runningTests(inSuite uuid: String) async throws -> [String] {
+        record("runningTests")
+        let next = withLock { _runningTests.isEmpty ? [] : _runningTests.removeFirst() }
+        guard let running = next else { throw HTTPClientError.noResponse }
+        return running
+    }
     func startTest(operation: TestOperation, launchID: String) async throws -> String {
         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms: make out-of-order finishes observable
         record("startTest")
@@ -558,13 +571,35 @@ final class CollapseRetriesTests: XCTestCase {
         }
     }
 
-    func testSharedSuite_FinishedByWholeClassAndByLateRetry_NotUnderARunningSlice() {
-        XCTAssertTrue(RPListener.finishesSharedSuite(ranWholeClass: true, statusNow: nil))
-        XCTAssertTrue(RPListener.finishesSharedSuite(ranWholeClass: false, statusNow: "FAILED"),
-                      "a retry re-finishes an already finished suite so its status is recomputed")
-        XCTAssertFalse(RPListener.finishesSharedSuite(ranWholeClass: false, statusNow: "IN_PROGRESS"),
-                       "another device may be running a test in it")
-        XCTAssertFalse(RPListener.finishesSharedSuite(ranWholeClass: false, statusNow: nil))
+    /// A class is often split across devices that run at the same time (method-level shards, a test
+    /// plan that selects some of its tests), so whoever leaves the class last must close its suite.
+    func testSharedSuite_FinishedOnlyWhileNoTestOfItRunsElsewhere() async {
+        let service = RecordingReportingService()
+        func finishes(_ answers: [[String]?]) async -> Bool {
+            service.queueRunningTests(answers)
+            return await RPListener.noTestRunsElsewhere(inSuite: "suite-1", own: ["mine"], using: service, pause: 0)
+        }
+
+        let noneRunning = await finishes([[]])
+        XCTAssertTrue(noneRunning)
+        let onlyOwnStillPending = await finishes([["mine"]])
+        XCTAssertTrue(onlyOwnStillPending, "this process's finished tests can still read as running on the async API")
+        let otherLandsAMomentLater = await finishes([["other"], []])
+        XCTAssertTrue(otherLandsAMomentLater)
+        let otherStillRunning = await finishes([["other"], ["other"], ["other"]])
+        XCTAssertFalse(otherStillRunning, "finishing the suite would force-finish the other device's running test")
+        let unreadable = await finishes([nil, nil, nil])
+        XCTAssertFalse(unreadable, "left to the launch finish")
+    }
+
+    func testRunningChildrenQuery_FiltersByParentLaunchAndStatus() {
+        let endPoint = GetRunningChildrenEndPoint(parentID: 7, launchID: 3)
+        XCTAssertEqual(endPoint.relativePath, "item")
+        XCTAssertEqual(endPoint.method, .get)
+        XCTAssertEqual(endPoint.encoding, .url, "a GET carries its filter in the query")
+        XCTAssertEqual(endPoint.parameters["filter.eq.parentId"] as? Int, 7)
+        XCTAssertEqual(endPoint.parameters["filter.eq.launchId"] as? Int, 3)
+        XCTAssertEqual(endPoint.parameters["filter.eq.status"] as? String, "IN_PROGRESS")
     }
 
     func testCollapseRetries_IsOptIn() {

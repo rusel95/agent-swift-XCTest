@@ -270,13 +270,25 @@ always safe, and `${{ github.run_id }}-${{ github.run_attempt }}` needs no shell
 
 **The agent does not finalize a launch whose UUID came from the `Info.plist`**: that
 launch is shared, and finishing it force-finishes every item still running in the other
-shards with the status of that finish request. Close the run once, after all shards are done:
+shards with the status of that finish request. Close the run once, after all shards are done,
+in a step of its own that also runs when tests failed: `saucectl` then exits non-zero, and a
+`run:` step stops at the first failing command.
 
-```bash
-curl -sf -X PUT -H "Authorization: Bearer $RP_TOKEN" -H "Content-Type: application/json" \
-  -d "{\"endTime\":\"$(date +%s000)\"}" \
-  "$RP_ENDPOINT/api/v1/$RP_PROJECT/launch/$RP_LAUNCH_UUID/finish"
+```yaml
+- name: Finish the ReportPortal launch
+  if: always()
+  run: |
+    code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+      -H "Authorization: Bearer $RP_TOKEN" -H "Content-Type: application/json" \
+      -d "{\"endTime\":\"$(date +%s000)\"}" \
+      "${RP_ENDPOINT%/}/api/v1/$RP_PROJECT/launch/$RP_LAUNCH_UUID/finish")
+    [ "$code" = 200 ] || [ "$code" = 409 ]   # 409: already finished, e.g. by an earlier attempt
 ```
+
+The finish must use the value compiled into the bundle. When the build and the farm run are
+separate jobs, compute `RP_LAUNCH_UUID` once in the build job and pass it to the test job as a
+job output: "Re-run failed jobs" re-runs only the test job, with a new `run_attempt`, while the
+bundle keeps the value it was built with.
 
 `RP_LAUNCH_UUID` as an **environment variable** keeps its existing behaviour (parallel
 simulator clones on one machine, agent finalizes normally) and takes priority over the
@@ -299,11 +311,12 @@ launch statistics count each one. Turn on retry collapsing in the same `Info.pli
   the row to see every attempt and the device it ran on.
 - With a shared launch UUID, a test class gets the **same suite id in every process** of the
   run, so a retry on another device lands in the original suite instead of a copy.
-- A device that ran a whole class finishes its suite; a retry that joins an already finished
-  suite finishes it again, so ReportPortal recomputes its status. If a class is split across
-  devices that run at the same time, its suite is left open by them (finishing it would cut
-  off a test still running on another device) and the launch finish call closes it — keep the
-  `curl` above. ReportPortal tags a suite closed that way `status: interrupted`.
+- A device finishes a shared suite when it leaves the class and no test of the class is
+  running on another device. So the device that leaves the class last closes it, also when a
+  class is split across devices (method-level shards, a test plan that selects some of its
+  tests), and a retry that joins later finishes it again, so ReportPortal recomputes its
+  status. Only a suite no device could close, e.g. after a device died mid-test, is left to
+  the launch finish step above; ReportPortal tags a suite closed that way `status: interrupted`.
 - Xcode's own repetitions (`-retry-tests-on-failure`) collapse the same way.
 
 It is off by default because the same test reported twice in one launch can also mean the

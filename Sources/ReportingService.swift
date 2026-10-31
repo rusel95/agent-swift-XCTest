@@ -197,6 +197,18 @@ public final class ReportingService: Sendable {
         try await httpClientV1.callEndPoint(GetItemByUuidEndPoint(uuid: uuid))
     }
 
+    /// Uuids of a suite's tests that ReportPortal still shows as running, in any process.
+    func runningTests(inSuite uuid: String) async throws -> [String] {
+        let suite = try await item(uuid: uuid)
+        guard let id = suite.id, let launchID = suite.launchId else {
+            throw HTTPClientError.decodingError("Item \(uuid) has no id or launchId")
+        }
+        let page: ItemPage = try await httpClientV1.callEndPoint(
+            GetRunningChildrenEndPoint(parentID: id, launchID: launchID)
+        )
+        return page.content.compactMap { $0.uuid }
+    }
+
     /// Finish suite item in ReportPortal
     /// - Parameter operation: SuiteOperation with suite ID and final status
     func finishSuite(operation: SuiteOperation) async throws {
@@ -343,10 +355,35 @@ struct GetItemByUuidEndPoint: EndPoint {
     }
 }
 
+/// `GET item?filter…` — the children of an item that are still running (v1 only).
+struct GetRunningChildrenEndPoint: EndPoint {
+    let method: HTTPMethod = .get
+    let relativePath = "item"
+    let encoding: ParameterEncoding = .url
+    let parameters: [String: Any]
+
+    init(parentID: Int, launchID: Int) {
+        parameters = [
+            "filter.eq.launchId": launchID,
+            "filter.eq.parentId": parentID,
+            "filter.eq.status": "IN_PROGRESS",
+            "page.size": 100
+        ]
+    }
+}
+
 /// The part of ReportPortal's item resource the agent reads.
 struct ItemResource: Decodable {
+    let id: Int?
+    let uuid: String?
+    let launchId: Int?
     let startTime: ServerTime?
     let status: String?
+}
+
+/// A page of items, as `GET item` returns it.
+struct ItemPage: Decodable {
+    let content: [ItemResource]
 }
 
 /// `PUT launch/{id}/update` — replace a launch's attributes (used to back-fill
@@ -383,6 +420,7 @@ protocol ReportingServiceProtocol: Sendable {
     func startSuite(operation: SuiteOperation, launchID: String) async throws -> String
     func finishSuite(operation: SuiteOperation) async throws
     func item(uuid: String) async throws -> ItemResource
+    func runningTests(inSuite uuid: String) async throws -> [String]
     func startTest(operation: TestOperation, launchID: String) async throws -> String
     func finishTest(operation: TestOperation) async throws
     func postLog(message: String, level: String, itemID: String, launchID: String, correlationID: UUID?) async throws

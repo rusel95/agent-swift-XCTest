@@ -24,9 +24,10 @@
   attempts of a test under its last one: one row, the status that matters, statistics
   counted once, nothing deleted. In a shared launch a test class gets the same suite id in
   every process (a name-based UUID of the launch UUID and `Module.Class`), so a retry on
-  another device lands in the original suite. A device that ran the whole class finishes the
-  suite and a later retry re-finishes it, so its status is recomputed; a suite still running a
-  slice of its class on another device is left to the launch finish. Off by default: the same test
+  another device lands in the original suite. A device finishes the suite when it leaves the
+  class and no test of it runs on another device, so the device that leaves last closes it, also
+  when a class is split across devices (method-level shards), and a later retry re-finishes it,
+  so its status is recomputed. Off by default: the same test
   reported twice can also be the same suite run on several device models on purpose, by @rusel95.
 - Tests and suites carry `codeRef` and `testCaseId` (`Module.Class[.method]`), so ReportPortal
   tracks a test's history across launches, by @rusel95.

@@ -37,10 +37,9 @@ The **only** configuration that survives to the device is what is **compiled int
 > whichever appears last in the JSON — and Swift serializes dictionary keys in per-process random
 > order, so each shard was a coin flip: when `"tags"` landed last, it silently **replaced every
 > keyed attribute, including `merge_group`**, and the merge couldn't find that launch. The agent
-> no longer sends the legacy field, so every launch keeps its attributes deterministically. As
-> defense-in-depth, if `startLaunch` ever gets a 409 (a launch with its UUID already exists), the
-> agent back-fills the full attribute set onto that launch. **Use an agent build that includes
-> these fixes** — launches created by older builds can still randomly lose their attributes.
+> no longer sends the legacy field, so every launch keeps its attributes deterministically.
+> **Use an agent build that includes this fix** — launches created by older builds can still
+> randomly lose their attributes.
 
 ---
 
@@ -53,56 +52,10 @@ The **only** configuration that survives to the device is what is **compiled int
 | CI needs | One `PUT /launch/{uuid}/finish` in an `if: always()` step at the end | `jq`, `curl`, the vendored merge script, discovery/settle polling |
 | Use it when | The agent is newer than 4.1.0 (has `ReportPortalLaunchUUID`) | Pinned to 4.1.0 or older |
 
-**Shared launch — the whole recipe:**
-
-```xml
-<!-- test target Info.plist, once -->
-<key>ReportPortalLaunchUUID</key>
-<string>$(RP_LAUNCH_UUID)</string>
-<!-- with smartRetry: show a retried test as one row -->
-<key>ReportPortalCollapseRetries</key>
-<true/>
-```
-
-```yaml
-env:
-  RP_LAUNCH_UUID: ${{ github.run_id }}-${{ github.run_attempt }}
-```
-
-```bash
-xcodebuild build-for-testing -scheme YourScheme \
-  -destination 'generic/platform=iOS' -derivedDataPath ./DerivedData \
-  RP_LAUNCH_UUID="$RP_LAUNCH_UUID"
-
-saucectl run --config .sauce/config.yml       # blocks until all shards finish; non-zero if a test failed
-```
-
-```yaml
-- name: Finish the ReportPortal launch
-  if: always()   # a failed run must be closed too, and a `run:` step stops at the first failing command
-  run: |
-    code=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
-      -H "Authorization: Bearer $RP_TOKEN" -H "Content-Type: application/json" \
-      -d "{\"endTime\":\"$(date +%s000)\"}" \
-      "${RP_ENDPOINT%/}/api/v1/$RP_PROJECT/launch/$RP_LAUNCH_UUID/finish")
-    [ "$code" = 200 ] || [ "$code" = 409 ]   # 409: already finished, e.g. by an earlier attempt
-```
-
-The finish must use the value compiled into the bundle. When the build and the Sauce run are
-separate jobs, compute `RP_LAUNCH_UUID` once in the build job and pass it to the test job as a
-job output: "Re-run failed jobs" re-runs only the test job, with a new `run_attempt`, while the
-bundle keeps the value it was built with.
-
-No `merge_group`, no `PlistBuddy`, no merge script, no retry dedup script. The value is used
-as the launch id verbatim, so any run-unique string works. See
-[retries in one row](../README.md#retries-in-one-row) for how retries are collapsed.
-
-> **Why the separate finish call.** With one shared launch the agent deliberately does not
-> finalize it (`ReportPortalSkipFinish` defaults to on in this mode). Finishing a launch
-> force-finishes its still-running items with the status carried by the finish request, so
-> whichever shard finished first would stamp the other shards' in-flight items and set the
-> launch's `endTime` while five devices are still reporting. Exactly one actor closes the
-> launch, once, at the end.
+**Shared launch:** the whole recipe, including the CI step that finishes the launch, is in the
+README: [one launch on real devices](../README.md#one-launch-on-real-devices) and
+[retries in one row](../README.md#retries-in-one-row). No `merge_group`, no `PlistBuddy`, no merge
+script, no retry dedup script.
 
 The rest of this guide documents the **legacy post-run merge**.
 

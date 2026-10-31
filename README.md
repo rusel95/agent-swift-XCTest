@@ -257,6 +257,8 @@ env:
 xcodebuild build-for-testing -scheme YourScheme \
   -destination 'generic/platform=iOS' -derivedDataPath ./DerivedData \
   RP_LAUNCH_UUID="$RP_LAUNCH_UUID"
+
+saucectl run --config .sauce/config.yml   # blocks until all shards finish; non-zero if a test failed
 ```
 
 Every shard compiled from that bundle reports into the same launch: the first

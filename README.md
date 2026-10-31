@@ -117,6 +117,8 @@ pod install
 
 **3. Run your tests** as usual (`xcodebuild test …` or ⌘U). A launch appears in ReportPortal in real time.
 
+**4. On a device farm** (e.g. Sauce Labs real devices), add `ReportPortalLaunchUUID` so every device reports into one launch, and `ReportPortalCollapseRetries` so a farm retry shows as one row. See [one launch on real devices](#one-launch-on-real-devices) and [retries in one row](#retries-in-one-row).
+
 ## Configuration Reference
 
 ### `Info.plist` keys
@@ -261,6 +263,11 @@ Every shard compiled from that bundle reports into the same launch: the first
 `POST /launch` creates it and ReportPortal drops the rest. Retries that re-run the same
 bundle join it too. No post-run merge is needed.
 
+One class split across three devices running at the same time, all in one launch; each test
+shows the `device` it ran on:
+
+![One launch from three devices](./example_shared_launch.png)
+
 A device whose clock runs behind the launch creator's never stamps an item before the
 launch's start: ReportPortal would silently drop it. The agent reads the start time the
 server stored and stamps from there.
@@ -318,6 +325,11 @@ launch statistics count each one. Turn on retry collapsing in the same `Info.pli
   status. Only a suite no device could close, e.g. after a device died mid-test, is left to
   the launch finish step above; ReportPortal tags a suite closed that way `status: interrupted`.
 - Xcode's own repetitions (`-retry-tests-on-failure`) collapse the same way.
+
+A test that failed on one device and passed on its retry on another is one `PASSED` row, with
+both attempts under **Retries**:
+
+![A retried test in one row](./example_retries.png)
 
 It is off by default because the same test reported twice in one launch can also mean the
 same suite ran on several device models on purpose; collapsing would hide those results.

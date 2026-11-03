@@ -8,9 +8,12 @@
   compiled-in plist, so they all report into one launch and no post-run merge is needed. The
   agent then leaves finishing that launch to one CI step after all shards
   (`ReportPortalSkipFinish` defaults to on), by @rusel95.
-- **Retries in one row:** `ReportPortalCollapseRetries` / `RP_COLLAPSE_RETRIES` (opt-in). A
-  retried test is one row with the status of its last attempt and the earlier attempts nested
-  under it, also when the retry ran on another device, by @rusel95.
+- **Retries in one row**, on by default: a retried test is one row with the status of its last
+  attempt and the earlier attempts nested under it, also when the retry ran on another device.
+  `ReportPortalCollapseRetries` / `RP_COLLAPSE_RETRIES` set to `NO` keeps every attempt as its
+  own row, by @rusel95.
+  - Behaviour change: a test that passes on an Xcode retry (`-retry-tests-on-failure`) is now one
+    `PASSED` row, so its launch is no longer failed because of the earlier attempt.
 - Tests and suites carry `codeRef` and `testCaseId`, so history follows a test across launches
   (it starts over once after the upgrade). Tests in a shared launch carry `device` and `os`,
   by @rusel95.

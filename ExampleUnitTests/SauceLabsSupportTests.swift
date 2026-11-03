@@ -656,11 +656,12 @@ final class CollapseRetriesTests: XCTestCase {
         XCTAssertEqual(endPoint.parameters["filter.eq.status"] as? String, "IN_PROGRESS")
     }
 
-    func testCollapseRetries_IsOptIn() {
-        XCTAssertFalse(RPListener.resolveCollapseRetries(from: Bundle(for: CollapseRetriesTests.self)))
+    func testCollapseRetries_IsOnUnlessTurnedOff() {
+        XCTAssertTrue(RPListener.resolveCollapseRetries(from: Bundle(for: CollapseRetriesTests.self)))
 
-        setenv("RP_COLLAPSE_RETRIES", "YES", 1)
+        setenv("RP_COLLAPSE_RETRIES", "NO", 1)
         defer { unsetenv("RP_COLLAPSE_RETRIES") }
-        XCTAssertTrue(RPListener.resolveCollapseRetries(from: nil))
+        XCTAssertFalse(RPListener.resolveCollapseRetries(from: nil),
+                       "an explicit NO wins: the same suite on several device models on purpose")
     }
 }

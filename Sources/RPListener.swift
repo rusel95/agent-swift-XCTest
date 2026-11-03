@@ -737,10 +737,11 @@ open class RPListener: NSObject, XCTestObservation {
     }
 
     /// Resolve collapseRetries: (1) RP_COLLAPSE_RETRIES env var, (2) ReportPortalCollapseRetries
-    /// Info.plist, (3) on: ReportPortal nests a retry under the test's earlier attempt. Off keeps every
-    /// attempt as its own row, e.g. when the same suite runs on several device models into one launch.
+    /// Info.plist, (3) false. Opt-in because the same test reported twice in one launch is either
+    /// a retry (one row) or the same suite on several device models (separate rows), and only the
+    /// setup knows which.
     static func resolveCollapseRetries(from testBundle: Bundle?) -> Bool {
-        boolFlag(env: "RP_COLLAPSE_RETRIES", plistKey: "ReportPortalCollapseRetries", from: testBundle) ?? true
+        boolFlag(env: "RP_COLLAPSE_RETRIES", plistKey: "ReportPortalCollapseRetries", from: testBundle) ?? false
     }
 
     /// A boolean setting: the `env` variable first, then `plistKey` in the test bundle's

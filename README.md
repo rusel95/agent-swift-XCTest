@@ -40,7 +40,7 @@ The agent hooks into XCTest via [`XCTestObservation`](https://developer.apple.co
 - ☁️ **SauceLabs real-device merge** — a standout extra on top of all-platform support: each isolated device creates its own launch, and a vendored post-run script merges them into one. Copy-paste guide + script + agent prompt in [docs/SAUCELABS_SETUP.md](docs/SAUCELABS_SETUP.md).
 - 🧩 **Flexible configuration** — env vars override `Info.plist`, with sensible defaults.
 - 🏷️ **Metadata & tags** — device/OS attributes, custom tags, and test-plan-aware launch names.
-- 🔂 **Retries in one row** — farm or Xcode retries of a test show as one row with the final status, earlier attempts nested inside. On by default. See [retries in one row](#retries-in-one-row).
+- 🔂 **Retries in one row (opt-in)** — farm or Xcode retries of a test show as one row with the final status, earlier attempts nested inside. See [retries in one row](#retries-in-one-row).
 - 🎯 **Statuses ReportPortal computes** — suites and launches finish without a status, so ReportPortal derives it from the tests; skipped tests are reported as skipped.
 - 🔁 **Idempotent finalize** — a launch already finished (HTTP 409) is treated as success, not an error.
 
@@ -117,7 +117,7 @@ pod install
 
 **3. Run your tests** as usual (`xcodebuild test …` or ⌘U). A launch appears in ReportPortal in real time.
 
-**4. On a device farm** (e.g. Sauce Labs real devices), add `ReportPortalLaunchUUID` so every device reports into one launch; a farm retry then shows as one row. See [one launch on real devices](#one-launch-on-real-devices) and [retries in one row](#retries-in-one-row).
+**4. On a device farm** (e.g. Sauce Labs real devices), add `ReportPortalLaunchUUID` so every device reports into one launch, and `ReportPortalCollapseRetries` so a farm retry shows as one row. See [one launch on real devices](#one-launch-on-real-devices) and [retries in one row](#retries-in-one-row).
 
 ## Configuration Reference
 
@@ -135,7 +135,7 @@ pod install
 | `IsDebugLaunchMode` | Bool | — | Marks the launch as debug mode. |
 | `TestNameRules` | Dict | — | Display-name transforms (see below). |
 | `ReportPortalLaunchUUID` | String | — | Run-unique value so every shard reports into **one** launch. See [one launch on real devices](#one-launch-on-real-devices). |
-| `ReportPortalCollapseRetries` | Bool **or** String | — | Shows a retried test as one row, earlier attempts nested. On by default; `NO` keeps every attempt as its own row. See [retries in one row](#retries-in-one-row). |
+| `ReportPortalCollapseRetries` | Bool **or** String | — | Shows a retried test as one row, earlier attempts nested. Off by default. See [retries in one row](#retries-in-one-row). |
 | `ReportPortalMergeGroup` | String | — | Tags launches for the legacy SauceLabs post-run merge. |
 | `ReportPortalSkipFinish` | Bool **or** String | — | Defers launch finalization. Defaults to **on** when `ReportPortalLaunchUUID` is set. |
 
@@ -246,6 +246,9 @@ reaches every shard**, so the launch UUID can be supplied there:
 ```xml
 <key>ReportPortalLaunchUUID</key>
 <string>$(RP_LAUNCH_UUID)</string>
+<!-- Off by default: without it a farm retry is a second row. See "Retries in one row". -->
+<key>ReportPortalCollapseRetries</key>
+<true/>
 ```
 
 ```yaml
@@ -307,7 +310,12 @@ plist.
 
 A farm retry (SauceLabs `smartRetry`) re-runs failed tests on another device, in a new
 process. Without help, every attempt is a separate row: `FAILED`, `FAILED`, `PASSED`, and the
-launch statistics count each one. The agent collapses retries by default:
+launch statistics count each one. Turn on retry collapsing in the same `Info.plist`:
+
+```xml
+<key>ReportPortalCollapseRetries</key>
+<true/>
+```
 
 - Every test is started as a possible retry. ReportPortal finds an earlier attempt of the
   same test in the same suite and nests it under the new one, so the test is **one row with
@@ -328,14 +336,8 @@ both attempts under **Retries**:
 
 ![A retried test in one row](./example_retries.png)
 
-To keep every attempt as its own row, e.g. when the same suite runs on several device models
-into one launch on purpose, turn it off in the test target's `Info.plist`:
-
-```xml
-<key>ReportPortalCollapseRetries</key>
-<false/>
-```
-
+It is off by default because the same test reported twice in one launch can also mean the
+same suite ran on several device models on purpose; collapsing would hide those results.
 Tests in a shared launch carry `device` and `os` attributes either way.
 
 ## SauceLabs Real-Device Merge (legacy)
